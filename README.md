@@ -11,6 +11,19 @@ See more:
 
 ## Get Started
 
+Install dependencies with `uv`:
+
+```bash
+uv sync
+```
+
+Run scripts via `uv run`, for example:
+
+```bash
+uv run python generate_rollouts.py --provider vLLM
+uv run python analyze_rollouts.py
+```
+
 You can download our [MATH rollout dataset](https://huggingface.co/datasets/uzaymacar/math-rollouts) or resample your own data.
 
 Here's a quick rundown of the main scripts in this repository and what they do:
@@ -57,4 +70,3 @@ hf upload-large-folder uzaymacar/math_rollouts --repo-type=dataset math_rollouts
 ```
 
 But it turns out this is not `dataset` compatible. The `misc-scripts/push_hf_dataset.py` takes care of this instead, creating a `dataset`-compatible data repository on HuggingFace.
-

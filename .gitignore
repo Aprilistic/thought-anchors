@@ -6,8 +6,12 @@
 *.pyc
 *.csv
 *.lock
+!uv.lock
 plots/*
 math-rollouts/
 math-rollouts_test/
 .cursorindexingignore
 .specstory
+
+.venv/
+.python-version

@@ -1,0 +1,29 @@
+[project]
+name = "thought-anchors"
+version = "0.0.0"
+description = "Thought Anchors: reasoning rollout generation and analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "accelerate>=0.24.0",
+  "datasets>=2.14.0",
+  "httpx>=0.24.0",
+  "matplotlib>=3.7.0",
+  "numpy>=1.24.0",
+  "openai>=1.0.0",
+  "pandas>=2.0.0",
+  "pkld>=1.0.0",
+  "plotly>=5.14.0",
+  "python-dotenv>=1.0.0",
+  "scikit-learn>=1.3.0",
+  "scipy>=1.10.0",
+  "seaborn>=0.12.0",
+  "statsmodels>=0.14.0",
+  "torch>=2.0.0",
+  "tqdm>=4.65.0",
+  "transformers>=4.35.0",
+  "xgboost>=1.7.0",
+]
+
+[tool.uv]
+package = false
