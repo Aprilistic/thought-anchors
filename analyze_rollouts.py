@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from prompts import DAG_PROMPT
 import re
 from collections import Counter, defaultdict
-from sentence_transformers import SentenceTransformer
+from llm_endpoints import ENDPOINTS, OpenAICompatEmbeddingModel
 from utils import normalize_answer, split_solution_into_chunks
 import math
 import multiprocessing as mp
@@ -71,9 +71,7 @@ smoothing = 1e-9
 # smoothing = 0.5
 smoothing = 1.0
 
-parser = argparse.ArgumentParser(
-    description="Analyze rollout data and label chunks"
-)
+parser = argparse.ArgumentParser(description="Analyze rollout data and label chunks")
 parser.add_argument(
     "-ic",
     "--correct_rollouts_dir",
@@ -199,7 +197,7 @@ parser.add_argument(
     "-sm",
     "--sentence_model",
     type=str,
-    default="all-MiniLM-L6-v2",
+    default=ENDPOINTS.vllm_embeddings_model,
     help="Sentence transformer model to use for embeddings",
 )
 parser.add_argument(
@@ -290,9 +288,7 @@ if not client.api_key:
     raise ValueError("OPENAI_API_KEY not found in .env file")
 
 # Initialize the r1-distill-qwen-14b tokenizer
-tokenizer = AutoTokenizer.from_pretrained(
-    "deepseek-ai/deepseek-r1-distill-qwen-14b"
-)
+tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-r1-distill-qwen-14b")
 
 # Define stopwords to filter out
 stopwords = {
@@ -434,7 +430,7 @@ def generate_chunk_summary(chunk_text: str) -> str:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=20,
@@ -483,7 +479,7 @@ def generate_problem_nickname(problem_text: str) -> str:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=20,
@@ -527,7 +523,7 @@ def label_chunk(problem_text: str, chunks: List[str], chunk_idx: int) -> Dict:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": formatted_prompt}],
             temperature=0.0,
             response_format={"type": "json_object"},
@@ -601,13 +597,9 @@ def process_chunk_importance(
     )
 
     # Calculate resampling importance metrics
-    rs_acc = calculate_resampling_importance_accuracy(
-        chunk_idx, chunk_accuracies, args
-    )
+    rs_acc = calculate_resampling_importance_accuracy(chunk_idx, chunk_accuracies, args)
     rs_kl = (
-        calculate_resampling_importance_kl(
-            chunk_idx, chunk_info, problem_dir, args
-        )
+        calculate_resampling_importance_kl(chunk_idx, chunk_info, problem_dir, args)
         if problem_dir
         else 0.0
     )
@@ -700,8 +692,7 @@ def calculate_counterfactual_importance_accuracy(
 
             # Calculate similarity between removed and resampled chunks
             similarity = np.dot(removed_embedding, resampled_embedding) / (
-                np.linalg.norm(removed_embedding)
-                * np.linalg.norm(resampled_embedding)
+                np.linalg.norm(removed_embedding) * np.linalg.norm(resampled_embedding)
             )
 
             # If similarity is below threshold, consider it a dissimilar solution
@@ -719,9 +710,7 @@ def calculate_counterfactual_importance_accuracy(
     )
 
     # Calculate overdeterminedness based on exact string matching of resampled chunks
-    resampled_chunks_str = [
-        pair[1] for pair in chunk_pairs
-    ]  # Get all resampled chunks
+    resampled_chunks_str = [pair[1] for pair in chunk_pairs]  # Get all resampled chunks
     unique_resampled = set(resampled_chunks_str)  # Get unique resampled chunks
 
     # Calculate overdeterminedness as ratio of duplicates
@@ -745,8 +734,7 @@ def calculate_counterfactual_importance_accuracy(
         [
             sol
             for sol in dissimilar_solutions
-            if sol.get("is_correct", None) is not None
-            and sol.get("answer", "") != ""
+            if sol.get("is_correct", None) is not None and sol.get("answer", "") != ""
         ]
     )
     dissimilar_accuracy = (
@@ -763,8 +751,7 @@ def calculate_counterfactual_importance_accuracy(
         [
             sol
             for sol in next_solutions
-            if sol.get("is_correct", None) is not None
-            and sol.get("answer", "") != ""
+            if sol.get("is_correct", None) is not None and sol.get("answer", "") != ""
         ]
     )
     next_accuracy = next_correct / next_total if next_total > 0 else 0.0
@@ -837,8 +824,7 @@ def calculate_counterfactual_importance_kl(
 
             # Calculate similarity between removed and resampled chunks
             similarity = np.dot(removed_embedding, resampled_embedding) / (
-                np.linalg.norm(removed_embedding)
-                * np.linalg.norm(resampled_embedding)
+                np.linalg.norm(removed_embedding) * np.linalg.norm(resampled_embedding)
             )
 
             # If similarity is below threshold, consider it a dissimilar solution
@@ -929,9 +915,7 @@ def calculate_counterfactual_importance_kl(
     return kl_div
 
 
-def calculate_resampling_importance_accuracy(
-    chunk_idx, chunk_accuracies, args=None
-):
+def calculate_resampling_importance_accuracy(chunk_idx, chunk_accuracies, args=None):
     """
     Calculate resampling importance for a chunk based on accuracy differences.
 
@@ -948,9 +932,7 @@ def calculate_resampling_importance_accuracy(
 
     # Get accuracies of all other chunks
     current_accuracy = chunk_accuracies[chunk_idx]
-    prev_accuracies = [
-        acc for idx, acc in chunk_accuracies.items() if idx <= chunk_idx
-    ]
+    prev_accuracies = [acc for idx, acc in chunk_accuracies.items() if idx <= chunk_idx]
     next_accuracies = [
         acc for idx, acc in chunk_accuracies.items() if idx == chunk_idx + 1
     ]
@@ -967,9 +949,7 @@ def calculate_resampling_importance_accuracy(
     return diff
 
 
-def calculate_resampling_importance_kl(
-    chunk_idx, chunk_info, problem_dir, args=None
-):
+def calculate_resampling_importance_kl(chunk_idx, chunk_info, problem_dir, args=None):
     """
     Calculate resampling importance for a chunk based on KL divergence.
 
@@ -1052,9 +1032,7 @@ def calculate_forced_importance_accuracy(
         return 0.0
 
     # Find next chunk with forced answer accuracy
-    next_chunks = [
-        idx for idx in forced_answer_accuracies.keys() if idx > chunk_idx
-    ]
+    next_chunks = [idx for idx in forced_answer_accuracies.keys() if idx > chunk_idx]
     if not next_chunks:
         return 0.0
 
@@ -1126,9 +1104,7 @@ def calculate_forced_importance_kl(
                 pass
 
     # Find next chunk to compare
-    next_chunks = [
-        idx for idx in forced_answer_accuracies.keys() if idx > chunk_idx
-    ]
+    next_chunks = [idx for idx in forced_answer_accuracies.keys() if idx > chunk_idx]
     if not next_chunks:
         return 0.0
 
@@ -1252,15 +1228,11 @@ def calculate_kl_divergence(
 
     if use_prob_true:
         # Calculate P(true) for each set
-        correct1 = sum(
-            1 for sol in chunk_sols1 if sol.get("is_correct", False) is True
-        )
+        correct1 = sum(1 for sol in chunk_sols1 if sol.get("is_correct", False) is True)
         total1 = sum(
             1 for sol in chunk_sols1 if sol.get("is_correct", None) is not None
         )
-        correct2 = sum(
-            1 for sol in chunk_sols2 if sol.get("is_correct", False) is True
-        )
+        correct2 = sum(1 for sol in chunk_sols2 if sol.get("is_correct", False) is True)
         total2 = sum(
             1 for sol in chunk_sols2 if sol.get("is_correct", None) is not None
         )
@@ -1307,9 +1279,7 @@ def calculate_kl_divergence(
             V = len(global_vocab)
         else:
             # Fall back to union of answers in the two chunks (original behavior)
-            all_answers = set(answer_counts1.keys()) | set(
-                answer_counts2.keys()
-            )
+            all_answers = set(answer_counts1.keys()) | set(answer_counts2.keys())
             V = len(all_answers)
 
         # Pre-calculate totals once
@@ -1327,9 +1297,7 @@ def calculate_kl_divergence(
         # Calculate KL divergence in a single pass
         # Only iterate over answers that appear in at least one of the two chunks to save time
         # (answers not in either chunk contribute 0 to KL divergence)
-        observed_answers = set(answer_counts1.keys()) | set(
-            answer_counts2.keys()
-        )
+        observed_answers = set(answer_counts1.keys()) | set(answer_counts2.keys())
         kl_div = 0.0
         for answer in observed_answers:
             count1 = answer_counts1[answer]
@@ -1365,9 +1333,7 @@ def analyze_problem(
     problem_file = problem_dir / "problem.json"
 
     if not (
-        base_solution_file.exists()
-        and chunks_file.exists()
-        and problem_file.exists()
+        base_solution_file.exists() and chunks_file.exists() and problem_file.exists()
     ):
         print(f"Problem {problem_dir.name}: Missing required files")
         return None
@@ -1377,11 +1343,7 @@ def analyze_problem(
         problem = json.load(f)
 
     # Generate problem nickname if it doesn't exist or if forced
-    if (
-        force_metadata
-        or "nickname" not in problem
-        or not problem.get("nickname")
-    ):
+    if force_metadata or "nickname" not in problem or not problem.get("nickname"):
         print(f"Problem {problem_dir.name}: Generating problem nickname...")
         try:
             nickname = generate_problem_nickname(problem["problem"])
@@ -1392,9 +1354,7 @@ def analyze_problem(
                 json.dump(problem, f, indent=2)
 
         except Exception as e:
-            print(
-                f"Error generating nickname for problem {problem_dir.name}: {e}"
-            )
+            print(f"Error generating nickname for problem {problem_dir.name}: {e}")
             problem["nickname"] = "math problem"
 
     # Load base solution
@@ -1423,9 +1383,7 @@ def analyze_problem(
 
     # Check if at least 25% of chunks have corresponding chunk folders
     chunk_folders = [problem_dir / f"chunk_{i}" for i in valid_chunk_indices]
-    existing_chunk_folders = [
-        folder for folder in chunk_folders if folder.exists()
-    ]
+    existing_chunk_folders = [folder for folder in chunk_folders if folder.exists()]
 
     if len(existing_chunk_folders) < 0.1 * len(chunks):
         print(
@@ -1455,9 +1413,7 @@ def analyze_problem(
                     solutions_file = chunk_dir / "solutions.json"
                     if solutions_file.exists():
                         try:
-                            with open(
-                                solutions_file, "r", encoding="utf-8"
-                            ) as f:
+                            with open(solutions_file, "r", encoding="utf-8") as f:
                                 solutions = json.load(f)
 
                             # Calculate accuracy from solutions
@@ -1474,16 +1430,12 @@ def analyze_problem(
                                 and sol.get("answer", "") != ""
                             )
                             accuracy = (
-                                correct_count / total_count
-                                if total_count > 0
-                                else 0.0
+                                correct_count / total_count if total_count > 0 else 0.0
                             )
                             forced_answer_accuracies[chunk_idx] = accuracy
 
                         except Exception as e:
-                            print(
-                                f"Error loading solutions from {solutions_file}: {e}"
-                            )
+                            print(f"Error loading solutions from {solutions_file}: {e}")
                             forced_answer_accuracies[chunk_idx] = 0.0
                     else:
                         forced_answer_accuracies[chunk_idx] = 0.0
@@ -1502,8 +1454,7 @@ def analyze_problem(
             correct = sum(
                 1
                 for sol in solutions
-                if sol.get("is_correct", False) is True
-                and sol.get("answer", "") != ""
+                if sol.get("is_correct", False) is True and sol.get("answer", "") != ""
             )
             total = sum(
                 1
@@ -1524,10 +1475,7 @@ def analyze_problem(
                 # Store answer distributions
                 chunk_answers[chunk_idx] = defaultdict(int)
                 for sol in solutions:
-                    if (
-                        sol.get("answer", "") != ""
-                        and sol.get("answer", "") != "None"
-                    ):
+                    if sol.get("answer", "") != "" and sol.get("answer", "") != "None":
                         chunk_answers[chunk_idx][
                             normalize_answer(sol.get("answer", ""))
                         ] += 1
@@ -1535,10 +1483,7 @@ def analyze_problem(
                 # Store resampled chunks and answers for absolute metrics
                 chunk_info[chunk_idx] = []
                 for sol in solutions:
-                    if (
-                        sol.get("answer", "") != ""
-                        and sol.get("answer", "") != "None"
-                    ):
+                    if sol.get("answer", "") != "" and sol.get("answer", "") != "None":
                         info = {
                             "chunk_removed": sol.get("chunk_removed", ""),
                             "chunk_resampled": sol.get("chunk_resampled", ""),
@@ -1548,11 +1493,14 @@ def analyze_problem(
                         }
                         chunk_info[chunk_idx].append(info)
 
-    # Initialize embedding model and cache at the problem level
+    # Initialize embedding model (OpenAI-compatible embeddings via vLLM) and cache at the problem level
     global embedding_model_cache
     if sentence_model not in embedding_model_cache:
-        embedding_model_cache[sentence_model] = SentenceTransformer(
-            sentence_model
+        embedding_model_cache[sentence_model] = OpenAICompatEmbeddingModel(
+            base_url=ENDPOINTS.embeddings_base_url(),
+            model=sentence_model,
+            api_key=os.getenv("VLLM_API_KEY", ENDPOINTS.vllm_api_key),
+            default_batch_size=args.batch_size,
         )
     embedding_model = embedding_model_cache[sentence_model]
 
@@ -1580,36 +1528,9 @@ def analyze_problem(
         range(0, len(all_chunks_list), batch_size), desc="Computing embeddings"
     ):
         batch = all_chunks_list[i : i + batch_size]
-        try:
-            batch_embeddings = embedding_model.encode(
-                batch, batch_size=batch_size, show_progress_bar=False
-            )
-            for chunk, embedding in zip(batch, batch_embeddings):
-                chunk_embedding_cache[chunk] = embedding
-        except RuntimeError as e:
-            if "CUDA" in str(e) or "out of memory" in str(e):
-                print(
-                    f"\nCUDA error at batch {i}, clearing cache and retrying with smaller batch..."
-                )
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                # Retry with half the batch size
-                mini_batch_size = max(1, batch_size // 2)
-                for j in range(0, len(batch), mini_batch_size):
-                    mini_batch = batch[j : j + mini_batch_size]
-                    mini_embeddings = embedding_model.encode(
-                        mini_batch,
-                        batch_size=mini_batch_size,
-                        show_progress_bar=False,
-                    )
-                    for chunk, embedding in zip(mini_batch, mini_embeddings):
-                        chunk_embedding_cache[chunk] = embedding
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            else:
-                raise
+        batch_embeddings = embedding_model.encode(batch, batch_size=batch_size)
+        for chunk, embedding in zip(batch, batch_embeddings):
+            chunk_embedding_cache[chunk] = embedding
 
     labeled_chunks = [{"chunk_idx": i} for i in valid_chunk_indices]
 
@@ -1631,11 +1552,7 @@ def analyze_problem(
         # Generate summaries for chunks that don't have them or if forced
         chunks_need_summary = []
         for chunk in labeled_chunks:
-            if (
-                force_metadata
-                or "summary" not in chunk
-                or not chunk.get("summary")
-            ):
+            if force_metadata or "summary" not in chunk or not chunk.get("summary"):
                 chunks_need_summary.append(chunk)
 
         if chunks_need_summary:
@@ -1827,9 +1744,7 @@ def analyze_problem(
                     summary = generate_chunk_summary(chunk)
                     chunk_data["summary"] = summary
                 except Exception as e:
-                    print(
-                        f"Error generating summary for chunk {chunk_idx}: {e}"
-                    )
+                    print(f"Error generating summary for chunk {chunk_idx}: {e}")
                     chunk_data["summary"] = "unknown action"
 
                 # Extract function tags and dependencies for this chunk
@@ -1839,9 +1754,7 @@ def analyze_problem(
                     chunk_data["function_tags"] = chunk_mapping.get(
                         "function_tags", ["unknown"]
                     )
-                    chunk_data["depends_on"] = chunk_mapping.get(
-                        "depends_on", []
-                    )
+                    chunk_data["depends_on"] = chunk_mapping.get("depends_on", [])
                 else:
                     chunk_data["function_tags"] = ["unknown"]
                     chunk_data["depends_on"] = []
@@ -1878,9 +1791,7 @@ def analyze_problem(
                     solutions_file = chunk_dir / "solutions.json"
                     if solutions_file.exists():
                         try:
-                            with open(
-                                solutions_file, "r", encoding="utf-8"
-                            ) as f:
+                            with open(solutions_file, "r", encoding="utf-8") as f:
                                 solutions = json.load(f)
 
                             # Calculate accuracy from solutions
@@ -1904,9 +1815,7 @@ def analyze_problem(
                             forced_answer_accuracies_list.append(accuracy)
 
                         except Exception as e:
-                            print(
-                                f"Error loading solutions from {solutions_file}: {e}"
-                            )
+                            print(f"Error loading solutions from {solutions_file}: {e}")
                             forced_answer_accuracies_list.append(0.0)
                     else:
                         forced_answer_accuracies_list.append(0.0)
@@ -1967,9 +1876,7 @@ def generate_plots(
                     continue  # Skip unknown tags
 
                 # Format tag for better display (e.g., "planning_step" -> "Planning Step")
-                formatted_tag = " ".join(
-                    word.capitalize() for word in tag.split("_")
-                )
+                formatted_tag = " ".join(word.capitalize() for word in tag.split("_"))
                 formatted_tags.append(formatted_tag)
 
             # If no valid tags after filtering, skip this chunk
@@ -1991,9 +1898,7 @@ def generate_plots(
                 "resampling_importance_accuracy": chunk.get(
                     "resampling_importance_accuracy", 0.0
                 ),
-                "resampling_importance_kl": chunk.get(
-                    "resampling_importance_kl", 0.0
-                ),
+                "resampling_importance_kl": chunk.get("resampling_importance_kl", 0.0),
                 "forced_importance_accuracy": chunk.get(
                     "forced_importance_accuracy", 0.0
                 ),
@@ -2034,9 +1939,7 @@ def generate_plots(
             df_forced_exploded["forced_importance_accuracy"] * 100
         )
         category_means = (
-            df_forced_exploded.groupby("function_tags", observed=True)[
-                "importance_pct"
-            ]
+            df_forced_exploded.groupby("function_tags", observed=True)["importance_pct"]
             .mean()
             .sort_values(ascending=False)
         )
@@ -2057,9 +1960,9 @@ def generate_plots(
         )
 
         # Add mean markers
-        means = df_forced_exploded_sorted.groupby(
-            "function_tags", observed=True
-        )["importance_pct"].mean()
+        means = df_forced_exploded_sorted.groupby("function_tags", observed=True)[
+            "importance_pct"
+        ].mean()
         for i, mean_val in enumerate(means[means.index]):
             ax.plot([i], [mean_val], "o", color="red", markersize=8)
 
@@ -2096,9 +1999,7 @@ def generate_plots(
         # Find categories present in both datasets
         normal_categories = df_exploded["function_tags"].unique()
         forced_categories = df_forced_exploded["function_tags"].unique()
-        common_categories = sorted(
-            set(normal_categories) & set(forced_categories)
-        )
+        common_categories = sorted(set(normal_categories) & set(forced_categories))
 
         for category in common_categories:
             # Get mean for normal importance
@@ -2111,9 +2012,9 @@ def generate_plots(
 
             # Get mean for forced importance
             forced_mean = (
-                df_forced_exploded[
-                    df_forced_exploded["function_tags"] == category
-                ]["forced_importance_accuracy"].mean()
+                df_forced_exploded[df_forced_exploded["function_tags"] == category][
+                    "forced_importance_accuracy"
+                ].mean()
                 * 100
             )
 
@@ -2161,9 +2062,7 @@ def generate_plots(
         # Add labels and title
         plt.xlabel("Category", fontsize=12)
         plt.ylabel("Importance (%)", fontsize=12)
-        plt.title(
-            "Comparison of Normal vs Forced Importance by Category", fontsize=14
-        )
+        plt.title("Comparison of Normal vs Forced Importance by Category", fontsize=14)
 
         # Set x-tick positions and labels
         plt.xticks(
@@ -2246,9 +2145,7 @@ def generate_plots(
     # 2. Plot average importance by problem level
     plt.figure(figsize=(10, 6))
     level_importance = (
-        df_chunks.groupby("problem_level")[importance_metric]
-        .mean()
-        .reset_index()
+        df_chunks.groupby("problem_level")[importance_metric].mean().reset_index()
     )
     sns.barplot(x="problem_level", y=importance_metric, data=level_importance)
     plt.title("Average Chunk Importance by Problem Level")
@@ -2261,13 +2158,9 @@ def generate_plots(
     # 3. Plot average importance by problem type
     plt.figure(figsize=(12, 8))
     type_importance = (
-        df_chunks.groupby("problem_type")[importance_metric]
-        .mean()
-        .reset_index()
+        df_chunks.groupby("problem_type")[importance_metric].mean().reset_index()
     )
-    type_importance = type_importance.sort_values(
-        importance_metric, ascending=False
-    )
+    type_importance = type_importance.sort_values(importance_metric, ascending=False)
     sns.barplot(x="problem_type", y=importance_metric, data=type_importance)
     plt.title("Average Chunk Importance by Problem Type")
     plt.xlabel(None)
@@ -2311,9 +2204,7 @@ def generate_plots(
             for tag in raw_tags:
                 if tag.lower() == "unknown":
                     continue
-                formatted_tag = " ".join(
-                    word.capitalize() for word in tag.split("_")
-                )
+                formatted_tag = " ".join(word.capitalize() for word in tag.split("_"))
                 formatted_tags.append(formatted_tag)
 
             if formatted_tags:
@@ -2321,9 +2212,7 @@ def generate_plots(
 
     # Add function tag to token data
     df_tokens["function_tag"] = df_tokens.apply(
-        lambda row: chunk_tags.get(
-            (row["problem_idx"], row["chunk_idx"]), "Other"
-        ),
+        lambda row: chunk_tags.get((row["problem_idx"], row["chunk_idx"]), "Other"),
         axis=1,
     )
 
@@ -2406,9 +2295,7 @@ def generate_plots(
 
     # Add the new analysis of top steps by category
     for top_n in [1, 3, 5, 10, 20, 30]:
-        analyze_top_steps_by_category(
-            results, output_dir, top_n=top_n, use_abs=False
-        )
+        analyze_top_steps_by_category(results, output_dir, top_n=top_n, use_abs=False)
 
     # Add the new analysis of steps with high z-score by category
     for z_threshold in [1.5, 2, 2.5, 3]:
@@ -2466,9 +2353,7 @@ def analyze_chunk_variance(
                 "resampling_importance_accuracy": chunk.get(
                     "resampling_importance_accuracy", 0.0
                 ),
-                "resampling_importance_kl": chunk.get(
-                    "resampling_importance_kl", 0.0
-                ),
+                "resampling_importance_kl": chunk.get("resampling_importance_kl", 0.0),
                 "forced_importance_accuracy": chunk.get(
                     "forced_importance_accuracy", 0.0
                 ),
@@ -2507,9 +2392,7 @@ def analyze_chunk_variance(
             "Problems with highest variance in chunk importance (potential reasoning forks):\n\n"
         )
 
-        for problem_idx, variance in high_variance_problems[
-            :20
-        ]:  # Top 20 problems
+        for problem_idx, variance in high_variance_problems[:20]:  # Top 20 problems
             f.write(f"Problem {problem_idx}: Variance = {variance:.6f}\n")
 
             # Get chunks for this problem
@@ -2533,7 +2416,7 @@ def analyze_chunk_variance(
                     chunk_text = chunk_text[:47] + "..."
 
                 f.write(
-                    f"    {i+1}. Chunk {chunk_idx}: {importance:.4f} - {tags} - '{chunk_text}'\n"
+                    f"    {i + 1}. Chunk {chunk_idx}: {importance:.4f} - {tags} - '{chunk_text}'\n"
                 )
 
             # Identify potential reasoning forks (clusters of important chunks)
@@ -2551,14 +2434,11 @@ def analyze_chunk_variance(
                 if chunk[importance_metric] > avg_importance:
                     if (
                         not current_cluster
-                        or chunk["chunk_idx"] - current_cluster[-1]["chunk_idx"]
-                        <= 2
+                        or chunk["chunk_idx"] - current_cluster[-1]["chunk_idx"] <= 2
                     ):
                         current_cluster.append(chunk)
                     else:
-                        if (
-                            len(current_cluster) >= 2
-                        ):  # At least 2 chunks in a cluster
+                        if len(current_cluster) >= 2:  # At least 2 chunks in a cluster
                             clusters.append(current_cluster)
                         current_cluster = [chunk]
 
@@ -2569,7 +2449,7 @@ def analyze_chunk_variance(
             for i, cluster in enumerate(clusters):
                 start_idx = cluster[0]["chunk_idx"]
                 end_idx = cluster[-1]["chunk_idx"]
-                f.write(f"    Fork {i+1}: Chunks {start_idx}-{end_idx}\n")
+                f.write(f"    Fork {i + 1}: Chunks {start_idx}-{end_idx}\n")
 
                 # Combine chunk text
                 combined_text = " ".join([c["chunk_text"] for c in cluster])
@@ -2646,9 +2526,7 @@ def analyze_function_tag_variance(
                     continue
 
                 # Format tag for better display
-                formatted_tag = " ".join(
-                    word.capitalize() for word in tag.split("_")
-                )
+                formatted_tag = " ".join(word.capitalize() for word in tag.split("_"))
 
                 if formatted_tag not in tag_chunks:
                     tag_chunks[formatted_tag] = []
@@ -2672,9 +2550,7 @@ def analyze_function_tag_variance(
                         "forced_importance_accuracy": chunk.get(
                             "forced_importance_accuracy", 0.0
                         ),
-                        "forced_importance_kl": chunk.get(
-                            "forced_importance_kl", 0.0
-                        ),
+                        "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
                     }
                 )
 
@@ -2703,9 +2579,7 @@ def analyze_function_tag_variance(
     )
 
     # Save results
-    with open(
-        variance_dir / "function_tag_variance.txt", "w", encoding="utf-8"
-    ) as f:
+    with open(variance_dir / "function_tag_variance.txt", "w", encoding="utf-8") as f:
         f.write("Function tags with highest variance in importance:\n\n")
 
         for tag, stats in sorted_tags:
@@ -2777,9 +2651,7 @@ def analyze_within_problem_variance(
         output_dir: Directory to save analysis results
         importance_metric: Importance metric to use for the analysis
     """
-    print(
-        "Analyzing within-problem variance to identify potential reasoning forks..."
-    )
+    print("Analyzing within-problem variance to identify potential reasoning forks...")
 
     variance_dir = output_dir / "variance_analysis"
     variance_dir.mkdir(exist_ok=True, parents=True)
@@ -2798,9 +2670,7 @@ def analyze_within_problem_variance(
             continue
 
         # Calculate importance values and their variance
-        importance_values = [
-            chunk.get(importance_metric, 0.0) for chunk in chunks
-        ]
+        importance_values = [chunk.get(importance_metric, 0.0) for chunk in chunks]
         mean_importance = np.mean(importance_values)
         variance = np.var(importance_values)
 
@@ -2811,9 +2681,7 @@ def analyze_within_problem_variance(
         for i, chunk in enumerate(chunks):
             importance = chunk.get(importance_metric, 0.0)
             z_score = (importance - mean_importance) / (
-                np.std(importance_values)
-                if np.std(importance_values) > 0
-                else 1
+                np.std(importance_values) if np.std(importance_values) > 0 else 1
             )
 
             # Consider chunks with importance significantly different from mean as potential forks
@@ -2837,9 +2705,7 @@ def analyze_within_problem_variance(
                         "forced_importance_accuracy": chunk.get(
                             "forced_importance_accuracy", 0.0
                         ),
-                        "forced_importance_kl": chunk.get(
-                            "forced_importance_kl", 0.0
-                        ),
+                        "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
                         "z_score": z_score,
                         "function_tags": chunk.get("function_tags", []),
                     }
@@ -2859,9 +2725,7 @@ def analyze_within_problem_variance(
     high_variance_problems.sort(key=lambda x: x["variance"], reverse=True)
 
     # Save results
-    with open(
-        variance_dir / "within_problem_variance.txt", "w", encoding="utf-8"
-    ) as f:
+    with open(variance_dir / "within_problem_variance.txt", "w", encoding="utf-8") as f:
         f.write(
             "Problems with high variance in chunk importance (potential reasoning forks):\n\n"
         )
@@ -2911,9 +2775,7 @@ def analyze_within_problem_variance(
             p["problem_idx"] for p in high_variance_problems[:15]
         ]  # Top 15 problems
         variances = [p["variance"] for p in high_variance_problems[:15]]
-        fork_counts = [
-            len(p["potential_forks"]) for p in high_variance_problems[:15]
-        ]
+        fork_counts = [len(p["potential_forks"]) for p in high_variance_problems[:15]]
 
         # Create bar chart
         plt.bar(range(len(problem_indices)), variances)
@@ -2990,10 +2852,7 @@ def plot_chunk_accuracy_by_position(
             chunk_idx = chunk.get("chunk_idx")
 
             # Only include the first 100 chunks
-            if (
-                max_chunks_to_show is not None
-                and chunk_idx > max_chunks_to_show
-            ):
+            if max_chunks_to_show is not None and chunk_idx > max_chunks_to_show:
                 continue
 
             # Get the solutions for this chunk
@@ -3015,9 +2874,7 @@ def plot_chunk_accuracy_by_position(
                 if isinstance(tag, str):
                     # Convert tag like "planning_step" to "PS"
                     words = tag.split("_")
-                    first_tag = "".join(
-                        word[0].upper() for word in words if word
-                    )
+                    first_tag = "".join(word[0].upper() for word in words if word)
 
             chunk_data.append(
                 {
@@ -3179,22 +3036,18 @@ def plot_chunk_accuracy_by_position(
         for i in range(1, len(chunk_indices) - 1):
             # For correct rollouts, annotate minima (lower than both neighbors)
             is_minimum = (
-                accuracies[i] < accuracies[i - 1]
-                and accuracies[i] < accuracies[i + 1]
+                accuracies[i] < accuracies[i - 1] and accuracies[i] < accuracies[i + 1]
             )
             # For all rollouts, annotate maxima (higher than both neighbors)
             is_maximum = (
-                accuracies[i] > accuracies[i - 1]
-                and accuracies[i] > accuracies[i + 1]
+                accuracies[i] > accuracies[i - 1] and accuracies[i] > accuracies[i + 1]
             )
 
             if tags[i]:  # Only add if there's a tag
                 if (rollout_type == "correct" and is_minimum) or is_maximum:
                     # Position below for minima, above for maxima
                     y_offset = (
-                        -15
-                        if (rollout_type == "correct" and is_minimum)
-                        else 7.5
+                        -15 if (rollout_type == "correct" and is_minimum) else 7.5
                     )
 
                     plt.annotate(
@@ -3211,13 +3064,9 @@ def plot_chunk_accuracy_by_position(
 
         # Plot forced answer accuracy if available
         if df_forced is not None:
-            forced_problem_data = df_forced[
-                df_forced["problem_idx"] == problem_idx
-            ]
+            forced_problem_data = df_forced[df_forced["problem_idx"] == problem_idx]
             if not forced_problem_data.empty:
-                forced_problem_data = forced_problem_data.sort_values(
-                    "chunk_idx"
-                )
+                forced_problem_data = forced_problem_data.sort_values("chunk_idx")
                 plt.plot(
                     forced_problem_data["chunk_idx"],
                     forced_problem_data["accuracy"],
@@ -3252,9 +3101,7 @@ def plot_chunk_accuracy_by_position(
     # Plot average for forced answer if available
     if df_forced is not None:
         forced_avg_by_chunk = (
-            df_forced.groupby("chunk_idx")["accuracy"]
-            .agg(["mean"])
-            .reset_index()
+            df_forced.groupby("chunk_idx")["accuracy"].agg(["mean"]).reset_index()
         )
         plt.plot(
             forced_avg_by_chunk["chunk_idx"],
@@ -3334,22 +3181,18 @@ def plot_chunk_accuracy_by_position(
         for i in range(1, len(chunk_indices) - 1):
             # For correct rollouts, annotate minima (lower than both neighbors)
             is_minimum = (
-                accuracies[i] < accuracies[i - 1]
-                and accuracies[i] < accuracies[i + 1]
+                accuracies[i] < accuracies[i - 1] and accuracies[i] < accuracies[i + 1]
             )
             # For all rollouts, annotate maxima (higher than both neighbors)
             is_maximum = (
-                accuracies[i] > accuracies[i - 1]
-                and accuracies[i] > accuracies[i + 1]
+                accuracies[i] > accuracies[i - 1] and accuracies[i] > accuracies[i + 1]
             )
 
             if tags[i]:  # Only add if there's a tag
                 if (rollout_type == "correct" and is_minimum) or is_maximum:
                     # Position below for minima, above for maxima
                     y_offset = (
-                        -15
-                        if (rollout_type == "correct" and is_minimum)
-                        else 7.5
+                        -15 if (rollout_type == "correct" and is_minimum) else 7.5
                     )
 
                     plt.annotate(
@@ -3366,16 +3209,10 @@ def plot_chunk_accuracy_by_position(
 
         # Plot forced answer accuracy if available
         if df_forced is not None:
-            forced_problem_data = df_forced[
-                df_forced["problem_idx"] == problem_idx
-            ]
+            forced_problem_data = df_forced[df_forced["problem_idx"] == problem_idx]
             if not forced_problem_data.empty:
-                forced_problem_data = forced_problem_data.sort_values(
-                    "chunk_idx"
-                )
-                forced_problem_data_idx = forced_problem_data[
-                    "chunk_idx"
-                ].to_numpy()
+                forced_problem_data = forced_problem_data.sort_values("chunk_idx")
+                forced_problem_data_idx = forced_problem_data["chunk_idx"].to_numpy()
                 forced_problem_data_accuracy = forced_problem_data[
                     "accuracy"
                 ].to_numpy()
@@ -3400,9 +3237,7 @@ def plot_chunk_accuracy_by_position(
             if "llama-8b" in args.correct_rollouts_dir
             else ""
         )
-        plt.title(
-            f"Problem {problem_idx}: Sentence accuracy by position{suffix}"
-        )
+        plt.title(f"Problem {problem_idx}: Sentence accuracy by position{suffix}")
 
         # Set x-axis limits to focus on first 100 chunks
         plt.xlim(-3, 100 if max_chunks_to_show is None else max_chunks_to_show)
@@ -3414,9 +3249,7 @@ def plot_chunk_accuracy_by_position(
         # plt.grid(True, alpha=0.3)
 
         # Add legend in the correct position based on rollout type
-        plt.legend(
-            loc="lower right" if rollout_type == "correct" else "upper right"
-        )
+        plt.legend(loc="lower right" if rollout_type == "correct" else "upper right")
 
         # Save the plot
         plt.tight_layout()
@@ -3478,9 +3311,7 @@ def process_rollouts(
     if problems:
         problem_indices = [int(idx) for idx in problems.split(",")]
         problem_dirs = [
-            d
-            for d in problem_dirs
-            if int(d.name.split("_")[1]) in problem_indices
+            d for d in problem_dirs if int(d.name.split("_")[1]) in problem_indices
         ]
 
     # Limit number of problems if specified
@@ -3509,9 +3340,7 @@ def process_rollouts(
 
         # Check if all chunk folders exist
         chunk_folders = [problem_dir / f"chunk_{i}" for i in range(len(chunks))]
-        existing_chunk_folders = [
-            folder for folder in chunk_folders if folder.exists()
-        ]
+        existing_chunk_folders = [folder for folder in chunk_folders if folder.exists()]
 
         if len(existing_chunk_folders) == len(chunks):
             problems_with_complete_chunks += 1
@@ -3523,13 +3352,13 @@ def process_rollouts(
     print(f"\n=== {rollout_type.capitalize()} Rollouts Summary ===")
     print(f"Total problems found: {total_problems}")
     print(
-        f"Problems with complete chunk folders: {problems_with_complete_chunks} ({problems_with_complete_chunks/total_problems*100:.1f}%)"
+        f"Problems with complete chunk folders: {problems_with_complete_chunks} ({problems_with_complete_chunks / total_problems * 100:.1f}%)"
     )
     print(
-        f"Problems with partial chunk folders: {problems_with_partial_chunks} ({problems_with_partial_chunks/total_problems*100:.1f}%)"
+        f"Problems with partial chunk folders: {problems_with_partial_chunks} ({problems_with_partial_chunks / total_problems * 100:.1f}%)"
     )
     print(
-        f"Problems with no chunk folders: {problems_with_no_chunks} ({problems_with_no_chunks/total_problems*100:.1f}%)"
+        f"Problems with no chunk folders: {problems_with_no_chunks} ({problems_with_no_chunks / total_problems * 100:.1f}%)"
     )
 
     # Only analyze problems with at least some chunk folders
@@ -3548,9 +3377,7 @@ def process_rollouts(
 
         # Check if at least one chunk folder exists
         chunk_folders = [problem_dir / f"chunk_{i}" for i in range(len(chunks))]
-        existing_chunk_folders = [
-            folder for folder in chunk_folders if folder.exists()
-        ]
+        existing_chunk_folders = [folder for folder in chunk_folders if folder.exists()]
 
         if existing_chunk_folders:
             analyzable_problem_dirs.append(problem_dir)
@@ -3617,7 +3444,7 @@ def process_rollouts(
         print(f"\n{rollout_type.capitalize()} Category Importance Ranking:")
         for idx, row in category_importance.iterrows():
             print(
-                f"{idx+1}. {row['categories']}: {row['mean_pct']:.2f}% ± {row['se_pct']:.2f}% (n={int(row['count'])})"
+                f"{idx + 1}. {row['categories']}: {row['mean_pct']:.2f}% ± {row['se_pct']:.2f}% (n={int(row['count'])})"
             )
 
     # Analyze token frequencies if requested
@@ -3677,11 +3504,7 @@ def analyze_dag_token_frequencies(dag_dir: Path, output_dir: Path) -> None:
 
     # Find all problem directories
     problem_dirs = sorted(
-        [
-            d
-            for d in dag_dir.iterdir()
-            if d.is_dir() and d.name.startswith("problem_")
-        ]
+        [d for d in dag_dir.iterdir() if d.is_dir() and d.name.startswith("problem_")]
     )
 
     for problem_dir in problem_dirs:
@@ -3771,9 +3594,7 @@ def analyze_dag_token_frequencies(dag_dir: Path, output_dir: Path) -> None:
                 filtered_tokens = [
                     token
                     for token in tokens
-                    if token not in stopwords
-                    and not token.isdigit()
-                    and len(token) > 1
+                    if token not in stopwords and not token.isdigit() and len(token) > 1
                 ]
 
                 # Generate n-grams
@@ -3796,9 +3617,7 @@ def analyze_dag_token_frequencies(dag_dir: Path, output_dir: Path) -> None:
                 chunks_with_token = sum(
                     1
                     for chunk in chunks
-                    if re.search(
-                        r"\b" + re.escape(token) + r"\b", chunk.lower()
-                    )
+                    if re.search(r"\b" + re.escape(token) + r"\b", chunk.lower())
                 )
                 percentage = (chunks_with_token / total_chunks) * 100
                 token_percentages[token] = percentage
@@ -3853,9 +3672,7 @@ def analyze_dag_token_frequencies(dag_dir: Path, output_dir: Path) -> None:
 
         # Save plot
         ngram_name = "unigrams" if n == 1 else f"{n}-grams"
-        plt.savefig(
-            plots_dir / f"dag_token_{ngram_name}_by_category.png", dpi=300
-        )
+        plt.savefig(plots_dir / f"dag_token_{ngram_name}_by_category.png", dpi=300)
         plt.close()
 
         print(
@@ -3863,9 +3680,7 @@ def analyze_dag_token_frequencies(dag_dir: Path, output_dir: Path) -> None:
         )
 
         # Save token frequencies to JSON
-        token_frequencies_file = (
-            output_dir / f"dag_token_{ngram_name}_by_category.json"
-        )
+        token_frequencies_file = output_dir / f"dag_token_{ngram_name}_by_category.json"
         with open(token_frequencies_file, "w", encoding="utf-8") as f:
             json.dump(category_ngram_frequencies, f, indent=2)
 
@@ -3953,9 +3768,7 @@ def analyze_token_frequencies(
                 filtered_tokens = [
                     token
                     for token in tokens
-                    if token not in stopwords
-                    and not token.isdigit()
-                    and len(token) > 1
+                    if token not in stopwords and not token.isdigit() and len(token) > 1
                 ]
 
                 # Generate n-grams
@@ -3978,9 +3791,7 @@ def analyze_token_frequencies(
                 chunks_with_token = sum(
                     1
                     for chunk in chunks
-                    if re.search(
-                        r"\b" + re.escape(token) + r"\b", chunk.lower()
-                    )
+                    if re.search(r"\b" + re.escape(token) + r"\b", chunk.lower())
                 )
                 percentage = (chunks_with_token / total_chunks) * 100
                 token_percentages[token] = percentage
@@ -4043,9 +3854,7 @@ def analyze_token_frequencies(
         )
 
         # Save token frequencies to JSON
-        token_frequencies_file = (
-            output_dir / f"token_{ngram_name}_by_category.json"
-        )
+        token_frequencies_file = output_dir / f"token_{ngram_name}_by_category.json"
         with open(token_frequencies_file, "w", encoding="utf-8") as f:
             json.dump(category_ngram_frequencies, f, indent=2)
 
@@ -4107,8 +3916,7 @@ def analyze_top_steps_by_category(
             continue
 
         z_scores = [
-            (score - mean_importance) / std_importance
-            for score in importance_scores
+            (score - mean_importance) / std_importance for score in importance_scores
         ]
 
         # Create a list of (chunk_idx, z_score, function_tags) tuples
@@ -4122,9 +3930,7 @@ def analyze_top_steps_by_category(
             chunk_data.append((i, z_score, score_for_ranking, function_tags))
 
         # Sort by z-score (absolute or raw) and get top N
-        top_chunks = sorted(chunk_data, key=lambda x: x[2], reverse=True)[
-            :top_n
-        ]
+        top_chunks = sorted(chunk_data, key=lambda x: x[2], reverse=True)[:top_n]
 
         # Add to category dictionary - each chunk can have multiple tags
         for _, z_score, _, function_tags in top_chunks:
@@ -4133,9 +3939,7 @@ def analyze_top_steps_by_category(
 
             for tag in function_tags:
                 # Format tag for better display
-                formatted_tag = " ".join(
-                    word.capitalize() for word in tag.split("_")
-                )
+                formatted_tag = " ".join(word.capitalize() for word in tag.split("_"))
                 if formatted_tag.lower() == "unknown":
                     continue
 
@@ -4170,9 +3974,7 @@ def analyze_top_steps_by_category(
     counts = [category_counts[cat] for cat in sorted_categories]
 
     # Calculate standard error (SE = standard deviation / sqrt(sample size))
-    standard_errors = [
-        std / np.sqrt(count) for std, count in zip(std_zscores, counts)
-    ]
+    standard_errors = [std / np.sqrt(count) for std, count in zip(std_zscores, counts)]
 
     # Create bar plot with standard error bars
     bars = plt.bar(
@@ -4311,8 +4113,7 @@ def analyze_high_zscore_steps_by_category(
             continue
 
         z_scores = [
-            (score - mean_importance) / std_importance
-            for score in importance_scores
+            (score - mean_importance) / std_importance for score in importance_scores
         ]
         total_steps_analyzed += len(z_scores)
 
@@ -4337,9 +4138,7 @@ def analyze_high_zscore_steps_by_category(
 
             for tag in function_tags:
                 # Format tag for better display
-                formatted_tag = " ".join(
-                    word.capitalize() for word in tag.split("_")
-                )
+                formatted_tag = " ".join(word.capitalize() for word in tag.split("_"))
                 if formatted_tag.lower() == "unknown":
                     continue
 
@@ -4348,7 +4147,7 @@ def analyze_high_zscore_steps_by_category(
                 category_zscores[formatted_tag].append(score_to_store)
 
     print(
-        f"Found {total_high_zscore_steps} steps with z-score > {z_threshold} out of {total_steps_analyzed} total steps ({total_high_zscore_steps/total_steps_analyzed:.1%})"
+        f"Found {total_high_zscore_steps} steps with z-score > {z_threshold} out of {total_steps_analyzed} total steps ({total_high_zscore_steps / total_steps_analyzed:.1%})"
     )
 
     # Skip if no categories found
@@ -4383,9 +4182,7 @@ def analyze_high_zscore_steps_by_category(
     counts = [category_counts[cat] for cat in sorted_categories]
 
     # Calculate standard error (SE = standard deviation / sqrt(sample size))
-    standard_errors = [
-        std / np.sqrt(count) for std, count in zip(std_zscores, counts)
-    ]
+    standard_errors = [std / np.sqrt(count) for std, count in zip(std_zscores, counts)]
 
     # Create bar plot with standard error bars
     bars = plt.bar(
@@ -4412,9 +4209,7 @@ def analyze_high_zscore_steps_by_category(
 
     # Set labels and title
     plt.xlabel("Function Tag Category", fontsize=12)
-    plt.ylabel(
-        f"Average Z-Score (Steps with |Z| > {z_threshold}) ± SE", fontsize=12
-    )
+    plt.ylabel(f"Average Z-Score (Steps with |Z| > {z_threshold}) ± SE", fontsize=12)
     plt.title(
         f"Average Z-Score of Steps with |Z| > {z_threshold} by Category",
         fontsize=14,
@@ -4528,9 +4323,7 @@ def analyze_response_length_statistics(
                 token_lengths.append(num_tokens)
 
             except Exception as e:
-                print(
-                    f"Error processing correct rollout {problem_dir.name}: {e}"
-                )
+                print(f"Error processing correct rollout {problem_dir.name}: {e}")
                 continue
 
     # Process incorrect rollouts if provided
@@ -4568,9 +4361,7 @@ def analyze_response_length_statistics(
                 token_lengths.append(num_tokens)
 
             except Exception as e:
-                print(
-                    f"Error processing incorrect rollout {problem_dir.name}: {e}"
-                )
+                print(f"Error processing incorrect rollout {problem_dir.name}: {e}")
                 continue
 
     # Skip if no data collected
@@ -4689,9 +4480,7 @@ def main():
 
     # Process each rollout type if provided
     if correct_rollouts_dir:
-        print(
-            f"\n=== Processing CORRECT rollouts from {correct_rollouts_dir} ===\n"
-        )
+        print(f"\n=== Processing CORRECT rollouts from {correct_rollouts_dir} ===\n")
         correct_output_dir = output_dir / "correct_base_solution"
         correct_output_dir.mkdir(exist_ok=True, parents=True)
         process_rollouts(
@@ -4702,9 +4491,7 @@ def main():
             absolute=args.absolute,
             force_relabel=args.force_relabel,
             rollout_type="correct",
-            dag_dir=(
-                args.dag_dir if args.token_analysis_source == "dag" else None
-            ),
+            dag_dir=(args.dag_dir if args.token_analysis_source == "dag" else None),
             forced_answer_dir=correct_forced_answer_dir,
             get_token_frequencies=args.get_token_frequencies,
             max_chunks_to_show=args.max_chunks_to_show,
@@ -4726,9 +4513,7 @@ def main():
             # Check if the results have the forced importance metric
             forced_importance_exists = False
 
-            for result_file in correct_output_dir.glob(
-                "**/chunks_labeled.json"
-            ):
+            for result_file in correct_output_dir.glob("**/chunks_labeled.json"):
                 try:
                     with open(result_file, "r", encoding="utf-8") as f:
                         labeled_chunks = json.load(f)
@@ -4765,9 +4550,7 @@ def main():
                         os.symlink(src_file, dst_file)
 
                     # Run top steps and high z-score analyses specifically for forced importance
-                    print(
-                        "Running top steps analysis with forced importance metrics"
-                    )
+                    print("Running top steps analysis with forced importance metrics")
                     results = []
                     with open(src_file, "r", encoding="utf-8") as f:
                         results = json.load(f)
@@ -4788,9 +4571,7 @@ def main():
                     )
 
                     # Also run analyses for forced_importance_kl
-                    print(
-                        "Running top steps analysis with forced importance KL metric"
-                    )
+                    print("Running top steps analysis with forced importance KL metric")
                     analyze_top_steps_by_category(
                         results,
                         forced_output_dir,
@@ -4807,9 +4588,7 @@ def main():
                     )
 
                 except Exception as e:
-                    print(
-                        f"Error during forced importance specialized analysis: {e}"
-                    )
+                    print(f"Error during forced importance specialized analysis: {e}")
             else:
                 print(
                     "No forced importance metric found in results, skipping specialized analysis"
@@ -4829,9 +4608,7 @@ def main():
             absolute=args.absolute,
             force_relabel=args.force_relabel,
             rollout_type="incorrect",
-            dag_dir=(
-                args.dag_dir if args.token_analysis_source == "dag" else None
-            ),
+            dag_dir=(args.dag_dir if args.token_analysis_source == "dag" else None),
             forced_answer_dir=incorrect_forced_answer_dir,
             get_token_frequencies=args.get_token_frequencies,
             max_chunks_to_show=args.max_chunks_to_show,

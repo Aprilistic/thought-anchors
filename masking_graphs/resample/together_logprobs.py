@@ -51,10 +51,8 @@ Example usage:
 # Load environment variables
 load_dotenv()
 
-# Get Together API key
+# Get Together API key (validated at call time)
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-if not TOGETHER_API_KEY:
-    raise ValueError("Together API key not found")
 
 
 async def make_together_request(
@@ -63,7 +61,7 @@ async def make_together_request(
     top_p: float,
     max_tokens: int,
     model: str,
-    seed: int = None,
+    seed: Optional[int] = None,
     max_retries: int = 3,
     verbose: bool = True,
     logprobs: int = 5,
@@ -92,6 +90,11 @@ async def make_together_request(
     Returns:
         Dict containing the response with logprobs or error information
     """
+
+    if not TOGETHER_API_KEY:
+        raise ValueError(
+            "Together API key not found. Set TOGETHER_API_KEY environment variable."
+        )
 
     headers = {
         "Authorization": f"Bearer {TOGETHER_API_KEY}",
@@ -157,7 +160,7 @@ async def make_together_request(
                 if response.status_code == 500:
                     if verbose:
                         print(
-                            f"Server error (500) on attempt {attempt+1}/{max_retries}. Retrying..."
+                            f"Server error (500) on attempt {attempt + 1}/{max_retries}. Retrying..."
                         )
                     delay = retry_delay * (2**attempt)
                     if delay > 1:
@@ -168,7 +171,7 @@ async def make_together_request(
                 elif response.status_code == 429:
                     if verbose:
                         print(
-                            f"Rate limit (429) on attempt {attempt+1}/{max_retries}. Retrying..."
+                            f"Rate limit (429) on attempt {attempt + 1}/{max_retries}. Retrying..."
                         )
                     delay = retry_delay * (2**attempt)
                     if delay > 1:
@@ -210,33 +213,23 @@ async def make_together_request(
                     prompt_token_logprobs = []
                     prompt_top_logprobs = []
 
-                    if (
-                        echo
-                        and "prompt" in result
-                        and len(result["prompt"]) > 0
-                    ):
+                    if echo and "prompt" in result and len(result["prompt"]) > 0:
                         # Together.ai returns prompt tokens separately when echo=true
                         prompt_info = result["prompt"][0]
                         if "logprobs" in prompt_info:
                             prompt_lp = prompt_info["logprobs"]
                             prompt_tokens = prompt_lp.get("tokens", [])
-                            prompt_token_logprobs = prompt_lp.get(
-                                "token_logprobs", []
-                            )
+                            prompt_token_logprobs = prompt_lp.get("token_logprobs", [])
                             # Convert prompt top_logprobs if available
                             if "top_logprobs" in prompt_lp:
-                                prompt_top_logprobs = prompt_lp.get(
-                                    "top_logprobs", []
-                                )
+                                prompt_top_logprobs = prompt_lp.get("top_logprobs", [])
 
                     # Parse logprobs into structured format
                     structured_logprobs = None
                     if logprobs_data or prompt_tokens:
                         # Get generated tokens
                         gen_tokens = (
-                            logprobs_data.get("tokens", [])
-                            if logprobs_data
-                            else []
+                            logprobs_data.get("tokens", []) if logprobs_data else []
                         )
                         gen_token_logprobs = (
                             logprobs_data.get("token_logprobs", [])
@@ -252,9 +245,7 @@ async def make_together_request(
                         # Combine prompt and generated tokens if echo is enabled
                         if echo and prompt_tokens:
                             tokens = prompt_tokens + gen_tokens
-                            token_logprobs = (
-                                prompt_token_logprobs + gen_token_logprobs
-                            )
+                            token_logprobs = prompt_token_logprobs + gen_token_logprobs
 
                             # Handle top_logprobs: prompt doesn't have them from Together.ai
                             # Create dicts with the actual token and ERROR marker for prompt tokens
@@ -266,15 +257,12 @@ async def make_together_request(
                                     token_dict = {
                                         token: (
                                             prompt_token_logprobs[i]
-                                            if prompt_token_logprobs[i]
-                                            is not None
+                                            if prompt_token_logprobs[i] is not None
                                             else 0
                                         ),
                                         "ERROR": None,
                                     }
-                                    prompt_top_logprobs_filled.append(
-                                        token_dict
-                                    )
+                                    prompt_top_logprobs_filled.append(token_dict)
                                 top_logprobs = prompt_top_logprobs_filled + (
                                     gen_top_logprobs if gen_top_logprobs else []
                                 )
@@ -347,7 +335,7 @@ async def make_together_request(
         except Exception as e:
             if verbose:
                 print(
-                    f"Exception during Together API request (attempt {attempt+1}/{max_retries}): {e}"
+                    f"Exception during Together API request (attempt {attempt + 1}/{max_retries}): {e}"
                 )
             if attempt == max_retries - 1:
                 return {"error": f"Request exception: {str(e)}"}
@@ -410,9 +398,7 @@ async def generate_multiple_responses_together(
     model_str = model.replace("/", "-").replace(":", "")
 
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    prompt_hash = prompt_hash[
-        ::2
-    ]  # Take every other character for shorter hash
+    prompt_hash = prompt_hash[::2]  # Take every other character for shorter hash
 
     # Include logprobs and echo settings in cache key
     logprobs_str = f"_lp{logprobs}_echo{1 if echo else 0}"
@@ -447,8 +433,7 @@ async def generate_multiple_responses_together(
                     if logprobs > 0:
                         if (
                             "response" not in response_data
-                            or "logprobs"
-                            not in response_data.get("response", {})
+                            or "logprobs" not in response_data.get("response", {})
                         ):
                             if verbose:
                                 print(
@@ -491,9 +476,7 @@ async def generate_multiple_responses_together(
                         usage_data = resp_data.get("usage", {})
                         usage_obj = Usage(
                             prompt_tokens=usage_data.get("prompt_tokens", 0),
-                            completion_tokens=usage_data.get(
-                                "completion_tokens", 0
-                            ),
+                            completion_tokens=usage_data.get("completion_tokens", 0),
                             total_tokens=usage_data.get("total_tokens", 0),
                         )
 
@@ -503,15 +486,11 @@ async def generate_multiple_responses_together(
                             lp_data = resp_data["logprobs"]
                             logprobs_obj = Logprobs(
                                 tokens=lp_data.get("tokens", []),
-                                token_logprobs=lp_data.get(
-                                    "token_logprobs", []
-                                ),
+                                token_logprobs=lp_data.get("token_logprobs", []),
                                 top_logprobs=lp_data.get("top_logprobs", []),
                                 text_offset=lp_data.get("text_offset", []),
                                 prompt_length=lp_data.get("prompt_length", 0),
-                                num_prompt_tokens=lp_data.get(
-                                    "num_prompt_tokens", 0
-                                ),
+                                num_prompt_tokens=lp_data.get("num_prompt_tokens", 0),
                             )
 
                         # Create Response object
@@ -708,9 +687,7 @@ async def generate_multiple_responses_together(
                     usage_data = resp_data.get("usage", {})
                     usage_obj = Usage(
                         prompt_tokens=usage_data.get("prompt_tokens", 0),
-                        completion_tokens=usage_data.get(
-                            "completion_tokens", 0
-                        ),
+                        completion_tokens=usage_data.get("completion_tokens", 0),
                         total_tokens=usage_data.get("total_tokens", 0),
                     )
 
@@ -724,9 +701,7 @@ async def generate_multiple_responses_together(
                             top_logprobs=lp_data.get("top_logprobs", []),
                             text_offset=lp_data.get("text_offset", []),
                             prompt_length=lp_data.get("prompt_length", 0),
-                            num_prompt_tokens=lp_data.get(
-                                "num_prompt_tokens", 0
-                            ),
+                            num_prompt_tokens=lp_data.get("num_prompt_tokens", 0),
                         )
 
                     # Create Response object
@@ -850,9 +825,9 @@ async def gen_with_config(
             f"Config must be ProviderConfig, dict, or None, got {type(config)}"
         )
 
-    assert (
-        MODEL2PROVIDER[config.model] == "together"
-    ), f"Bad model in config: {config.model=}"
+    assert MODEL2PROVIDER[config.model] == "together", (
+        f"Bad model in config: {config.model=}"
+    )
 
     # Apply any overrides
     params.update(override_kwargs)

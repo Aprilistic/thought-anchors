@@ -57,10 +57,8 @@ Example usage:
 # Load environment variables
 load_dotenv()
 
-# Get Fireworks API key
+# Get Fireworks API key (validated at call time)
 FIREWORKS_API_KEY = os.getenv("FIREWORKS_API_KEY")
-if not FIREWORKS_API_KEY:
-    raise ValueError("Fireworks API key not found")
 
 
 async def make_fireworks_request(
@@ -69,7 +67,7 @@ async def make_fireworks_request(
     top_p: float,
     max_tokens: int,
     model: str,
-    seed: int = None,
+    seed: Optional[int] = None,
     max_retries: int = 3,
     verbose: bool = True,
     logprobs: int = 5,
@@ -98,6 +96,11 @@ async def make_fireworks_request(
     Returns:
         Dict containing the response with logprobs or error information
     """
+
+    if not FIREWORKS_API_KEY:
+        raise ValueError(
+            "Fireworks API key not found. Set FIREWORKS_API_KEY environment variable."
+        )
 
     headers = {
         "Authorization": f"Bearer {FIREWORKS_API_KEY}",
@@ -165,7 +168,7 @@ async def make_fireworks_request(
                 if response.status_code == 500:
                     if verbose:
                         print(
-                            f"Server error (500) on attempt {attempt+1}/{max_retries}. Retrying..."
+                            f"Server error (500) on attempt {attempt + 1}/{max_retries}. Retrying..."
                         )
                     delay = retry_delay * (2**attempt)
                     if delay > 1:
@@ -176,7 +179,7 @@ async def make_fireworks_request(
                 elif response.status_code == 429:
                     if verbose:
                         print(
-                            f"Rate limit (429) on attempt {attempt+1}/{max_retries}. Retrying..."
+                            f"Rate limit (429) on attempt {attempt + 1}/{max_retries}. Retrying..."
                         )
                     delay = retry_delay * (2**attempt)
                     if delay > 1:
@@ -231,11 +234,7 @@ async def make_fireworks_request(
                             "text_offset": text_offset,
                             "prompt_length": prompt_len,
                             "num_prompt_tokens": (
-                                sum(
-                                    1
-                                    for offset in text_offset
-                                    if offset < prompt_len
-                                )
+                                sum(1 for offset in text_offset if offset < prompt_len)
                                 if echo
                                 else 0
                             ),
@@ -275,7 +274,7 @@ async def make_fireworks_request(
         except Exception as e:
             if verbose:
                 print(
-                    f"Exception during Fireworks API request (attempt {attempt+1}/{max_retries}): {e}"
+                    f"Exception during Fireworks API request (attempt {attempt + 1}/{max_retries}): {e}"
                 )
             if attempt == max_retries - 1:
                 return {"error": f"Request exception: {str(e)}"}
@@ -341,9 +340,7 @@ async def generate_multiple_responses_fireworks(
         model_str = model_str.replace("accounts-fireworks-models-", "")
 
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    prompt_hash = prompt_hash[
-        ::2
-    ]  # Take every other character for shorter hash
+    prompt_hash = prompt_hash[::2]  # Take every other character for shorter hash
 
     # Include logprobs and echo settings in cache key
     logprobs_str = f"_lp{logprobs}_echo{1 if echo else 0}"
@@ -378,8 +375,7 @@ async def generate_multiple_responses_fireworks(
                     if logprobs > 0:
                         if (
                             "response" not in response_data
-                            or "logprobs"
-                            not in response_data.get("response", {})
+                            or "logprobs" not in response_data.get("response", {})
                         ):
                             if verbose:
                                 print(
@@ -422,9 +418,7 @@ async def generate_multiple_responses_fireworks(
                         usage_data = resp_data.get("usage", {})
                         usage_obj = Usage(
                             prompt_tokens=usage_data.get("prompt_tokens", 0),
-                            completion_tokens=usage_data.get(
-                                "completion_tokens", 0
-                            ),
+                            completion_tokens=usage_data.get("completion_tokens", 0),
                             total_tokens=usage_data.get("total_tokens", 0),
                         )
 
@@ -434,15 +428,11 @@ async def generate_multiple_responses_fireworks(
                             lp_data = resp_data["logprobs"]
                             logprobs_obj = Logprobs(
                                 tokens=lp_data.get("tokens", []),
-                                token_logprobs=lp_data.get(
-                                    "token_logprobs", []
-                                ),
+                                token_logprobs=lp_data.get("token_logprobs", []),
                                 top_logprobs=lp_data.get("top_logprobs", []),
                                 text_offset=lp_data.get("text_offset", []),
                                 prompt_length=lp_data.get("prompt_length", 0),
-                                num_prompt_tokens=lp_data.get(
-                                    "num_prompt_tokens", 0
-                                ),
+                                num_prompt_tokens=lp_data.get("num_prompt_tokens", 0),
                             )
 
                         # Create Response object
@@ -639,9 +629,7 @@ async def generate_multiple_responses_fireworks(
                     usage_data = resp_data.get("usage", {})
                     usage_obj = Usage(
                         prompt_tokens=usage_data.get("prompt_tokens", 0),
-                        completion_tokens=usage_data.get(
-                            "completion_tokens", 0
-                        ),
+                        completion_tokens=usage_data.get("completion_tokens", 0),
                         total_tokens=usage_data.get("total_tokens", 0),
                     )
 
@@ -655,9 +643,7 @@ async def generate_multiple_responses_fireworks(
                             top_logprobs=lp_data.get("top_logprobs", []),
                             text_offset=lp_data.get("text_offset", []),
                             prompt_length=lp_data.get("prompt_length", 0),
-                            num_prompt_tokens=lp_data.get(
-                                "num_prompt_tokens", 0
-                            ),
+                            num_prompt_tokens=lp_data.get("num_prompt_tokens", 0),
                         )
 
                     # Create Response object
@@ -781,9 +767,7 @@ async def gen_with_config(
                     **override_kwargs,
                 )
             else:
-                assert (
-                    provider == "fireworks"
-                ), f"Bad provider in config: {provider=}"
+                assert provider == "fireworks", f"Bad provider in config: {provider=}"
 
     # Handle different config input types
     if config is None:
@@ -804,9 +788,9 @@ async def gen_with_config(
             f"Config must be ProviderConfig, dict, or None, got {type(config)}"
         )
 
-    assert (
-        MODEL2PROVIDER[config.model] == "fireworks"
-    ), f"Bad model in config: {config.model=}"
+    assert MODEL2PROVIDER[config.model] == "fireworks", (
+        f"Bad model in config: {config.model=}"
+    )
     # Apply any overrides
     params.update(override_kwargs)
     del params["provider"]

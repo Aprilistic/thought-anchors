@@ -17,16 +17,17 @@ from pathlib import Path
 from typing import List, Dict, Union, Any, Optional
 from dotenv import load_dotenv
 
+from llm_endpoints import ENDPOINTS
+
 # Import dataclasses
 from .rollouts import Rollouts, FwResponse, Usage
 
 # Load environment variables
 load_dotenv()
 
-# Get OpenRouter API key
+# Get OpenRouter API key (optional when using a local vLLM server)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    raise ValueError("OpenRouter API key not found")
+
 
 async def make_openrouter_request(
     prompt: str,
@@ -34,7 +35,8 @@ async def make_openrouter_request(
     top_p: float,
     max_tokens: int,
     model: str,
-    seed: int = None,
+    seed: Optional[int] = None,
+    top_k: Optional[int] = None,
     max_retries: int = 3,
     verbose: bool = False,
 ) -> FwResponse:
@@ -54,12 +56,24 @@ async def make_openrouter_request(
     Returns:
         FwResponse dataclass with the response data
     """
+    use_vllm = not bool(OPENROUTER_API_KEY)
+    provider_name = "vLLM" if use_vllm else "OpenRouter"
+
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://mmlu-reasoning-experiment",
-        "X-Title": "MMLU Reasoning Research",
     }
+    if use_vllm:
+        vllm_api_key = os.getenv("VLLM_API_KEY", ENDPOINTS.vllm_api_key)
+        if vllm_api_key:
+            headers["Authorization"] = f"Bearer {vllm_api_key}"
+    else:
+        headers.update(
+            {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": "https://mmlu-reasoning-experiment",
+                "X-Title": "MMLU Reasoning Research",
+            }
+        )
 
     # Format as messages for the API (OpenRouter only supports chat completions)
     messages = [{"role": "user", "content": prompt}]
@@ -73,11 +87,18 @@ async def make_openrouter_request(
         "stream": False,
     }
 
+    if use_vllm and top_k is not None:
+        payload["top_k"] = top_k
+
     # Add seed if provided
     if seed is not None:
         payload["seed"] = seed
 
-    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    api_url = (
+        ENDPOINTS.generation_chat_completions_url()
+        if use_vllm
+        else "https://openrouter.ai/api/v1/chat/completions"
+    )
 
     # Implement exponential backoff for retries
     retry_delay = 2
@@ -97,7 +118,7 @@ async def make_openrouter_request(
                             else "Rate limit (429)"
                         )
                         print(
-                            f"{error_type} on attempt {attempt+1}/{max_retries}. Retrying..."
+                            f"{error_type} on attempt {attempt + 1}/{max_retries}. Retrying..."
                         )
                     delay = min(retry_delay * (2**attempt), 61)
                     await asyncio.sleep(delay)
@@ -116,7 +137,7 @@ async def make_openrouter_request(
                             post="",
                             reasoning="",
                             finish_reason="error",
-                            provider="OpenRouter",
+                            provider=provider_name,
                             response_id="",
                             model=model,
                             object="error",
@@ -148,9 +169,7 @@ async def make_openrouter_request(
                     # Combine them appropriately
                     if reasoning_text and content_text:
                         # Both present - typical thinking mode response
-                        full_text = (
-                            f"{reasoning_text}\n</think>\n{content_text}"
-                        )
+                        full_text = f"{reasoning_text}\n</think>\n{content_text}"
                     elif reasoning_text:
                         # Only reasoning - model put everything in reasoning field
                         full_text = reasoning_text
@@ -168,9 +187,7 @@ async def make_openrouter_request(
                     usage_data = result.get("usage", {})
                     usage = Usage(
                         prompt_tokens=usage_data.get("prompt_tokens", 0),
-                        completion_tokens=usage_data.get(
-                            "completion_tokens", 0
-                        ),
+                        completion_tokens=usage_data.get("completion_tokens", 0),
                         total_tokens=usage_data.get("total_tokens", 0),
                     )
 
@@ -181,7 +198,7 @@ async def make_openrouter_request(
                         post=content_text,  # The final answer part
                         reasoning=reasoning_text,  # The thinking part
                         finish_reason=choice.get("finish_reason", ""),
-                        provider=result.get("provider", "OpenRouter"),
+                        provider=provider_name,
                         response_id=result.get("id", ""),
                         model=result.get("model", model),
                         object=result.get("object", "chat.completion"),
@@ -199,7 +216,7 @@ async def make_openrouter_request(
                         post="",
                         reasoning="",
                         finish_reason="error",
-                        provider="OpenRouter",
+                        provider=provider_name,
                         response_id="",
                         model=model,
                         object="error",
@@ -214,7 +231,7 @@ async def make_openrouter_request(
         except Exception as e:
             if verbose:
                 print(
-                    f"Exception during OpenRouter API request (attempt {attempt+1}/{max_retries}): {e}"
+                    f"Exception during OpenRouter API request (attempt {attempt + 1}/{max_retries}): {e}"
                 )
             if attempt == max_retries - 1:
                 return FwResponse(
@@ -223,14 +240,12 @@ async def make_openrouter_request(
                     post="",
                     reasoning="",
                     finish_reason="error",
-                    provider="OpenRouter",
+                    provider=provider_name,
                     response_id="",
                     model=model,
                     object="error",
                     created=int(time.time()),
-                    usage=Usage(
-                        prompt_tokens=0, completion_tokens=0, total_tokens=0
-                    ),
+                    usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
                     logprobs=None,
                     echo=False,
                 )
@@ -244,7 +259,7 @@ async def make_openrouter_request(
         post="",
         reasoning="",
         finish_reason="error",
-        provider="OpenRouter",
+        provider=provider_name,
         response_id="",
         model=model,
         object="error",
@@ -261,7 +276,8 @@ async def generate_responses_openrouter(
     temperature: float = 0.6,
     top_p: float = 0.95,
     max_tokens: int = 16384,
-    model: str = "qwen/qwen3-30b-a3b",
+    model: str = ENDPOINTS.vllm_generation_model,
+    top_k: int = ENDPOINTS.default_top_k,
     max_retries: int = 3,
     verbose: bool = False,
 ) -> Rollouts:
@@ -282,11 +298,8 @@ async def generate_responses_openrouter(
         Rollouts dataclass containing all responses and metadata
     """
 
-    # Check API key
-    if not OPENROUTER_API_KEY:
-        raise ValueError(
-            "OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable or create openrouter_api_key.txt"
-        )
+    use_vllm = not bool(OPENROUTER_API_KEY)
+    provider_name = "vLLM" if use_vllm else "OpenRouter"
 
     # Create cache directory structure
     model_str = model.replace("/", "-").replace(":", "")
@@ -373,6 +386,7 @@ async def generate_responses_openrouter(
                 max_tokens=max_tokens,
                 model=model,
                 seed=seed,
+                top_k=top_k,
                 max_retries=max_retries,
                 verbose=verbose,
             )
@@ -414,7 +428,7 @@ async def generate_responses_openrouter(
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
-        provider="OpenRouter",
+        provider=provider_name,
         model=model,
         responses=responses,
         cache_dir=cache_dir,
@@ -541,7 +555,7 @@ if __name__ == "__main__":
         print(f"Responses generated: {len(rollouts)}")
 
         for i, response in enumerate(rollouts):
-            print(f"\nResponse {i+1}:")
+            print(f"\nResponse {i + 1}:")
             print(f"  Text: {response.text}")
             print(f"  Reasoning: {response.reasoning}")
             print(f"  Post: {response.post}")
