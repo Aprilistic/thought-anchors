@@ -20,7 +20,7 @@ class LLMEndpoints:
         "VLLM_EMBEDDINGS_BASE_URL",
         os.getenv("VLLM_GENERATION_BASE_URL", "http://localhost:8000/v1"),
     )
-    vllm_api_key: str = os.getenv("VLLM_API_KEY", "local")
+    vllm_api_key: str = os.getenv("VLLM_API_KEY", "EMPTY")
 
     # Models
     vllm_generation_model: str = os.getenv(

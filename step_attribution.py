@@ -11,7 +11,7 @@ import seaborn as sns
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
-from llm_endpoints import ENDPOINTS, OpenAICompatEmbeddingModel
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from utils import split_solution_into_chunks
 import gc
@@ -633,14 +633,13 @@ def analyze_step_attribution(
     correct_dir.mkdir(exist_ok=True, parents=True)
     incorrect_dir.mkdir(exist_ok=True, parents=True)
 
-    # Load sentence embedding model (OpenAI-compatible embeddings via vLLM)
+    # Load sentence embedding model (local SentenceTransformer)
     print("Loading sentence embedding model...")
-    model = OpenAICompatEmbeddingModel(
-        base_url=ENDPOINTS.embeddings_base_url(),
-        model=ENDPOINTS.vllm_embeddings_model,
-        api_key=ENDPOINTS.vllm_api_key,
-        default_batch_size=256,
-    )
+    import torch
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    model = SentenceTransformer("all-MiniLM-L6-v2").to(device)
+    model.eval()
 
     # Process each problem
     for problem_dir in tqdm(problem_dirs, desc="Analyzing problems"):

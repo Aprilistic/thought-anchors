@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 from prompts import DAG_PROMPT
 import re
 from collections import Counter, defaultdict
-from llm_endpoints import ENDPOINTS, OpenAICompatEmbeddingModel
+from llm_endpoints import ENDPOINTS
+from sentence_transformers import SentenceTransformer
 from utils import normalize_answer, split_solution_into_chunks
 import math
 import multiprocessing as mp
@@ -197,7 +198,7 @@ parser.add_argument(
     "-sm",
     "--sentence_model",
     type=str,
-    default=ENDPOINTS.vllm_embeddings_model,
+    default="all-MiniLM-L6-v2",
     help="Sentence transformer model to use for embeddings",
 )
 parser.add_argument(
@@ -1499,15 +1500,10 @@ def analyze_problem(
                         }
                         chunk_info[chunk_idx].append(info)
 
-    # Initialize embedding model (OpenAI-compatible embeddings via vLLM) and cache at the problem level
+    # Initialize embedding model (local SentenceTransformer) and cache at the problem level
     global embedding_model_cache
     if sentence_model not in embedding_model_cache:
-        embedding_model_cache[sentence_model] = OpenAICompatEmbeddingModel(
-            base_url=ENDPOINTS.embeddings_base_url(),
-            model=sentence_model,
-            api_key=os.getenv("VLLM_API_KEY", ENDPOINTS.vllm_api_key),
-            default_batch_size=args.batch_size,
-        )
+        embedding_model_cache[sentence_model] = SentenceTransformer(sentence_model)
     embedding_model = embedding_model_cache[sentence_model]
 
     # Create problem-level embedding cache
@@ -1534,9 +1530,35 @@ def analyze_problem(
         range(0, len(all_chunks_list), batch_size), desc="Computing embeddings"
     ):
         batch = all_chunks_list[i : i + batch_size]
-        batch_embeddings = embedding_model.encode(batch, batch_size=batch_size)
-        for chunk, embedding in zip(batch, batch_embeddings):
-            chunk_embedding_cache[chunk] = embedding
+        try:
+            batch_embeddings = embedding_model.encode(
+                batch, batch_size=batch_size, show_progress_bar=False
+            )
+            for chunk, embedding in zip(batch, batch_embeddings):
+                chunk_embedding_cache[chunk] = embedding
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "out of memory" in str(e):
+                print(
+                    f"\nCUDA error at batch {i}, clearing cache and retrying with smaller batch..."
+                )
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                mini_batch_size = max(1, batch_size // 2)
+                for j in range(0, len(batch), mini_batch_size):
+                    mini_batch = batch[j : j + mini_batch_size]
+                    mini_embeddings = embedding_model.encode(
+                        mini_batch,
+                        batch_size=mini_batch_size,
+                        show_progress_bar=False,
+                    )
+                    for chunk, embedding in zip(mini_batch, mini_embeddings):
+                        chunk_embedding_cache[chunk] = embedding
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            else:
+                raise
 
     labeled_chunks = [{"chunk_idx": i} for i in valid_chunk_indices]
 

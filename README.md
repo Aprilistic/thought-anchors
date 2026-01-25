@@ -10,21 +10,21 @@ This fork modifies the original project to support running experiments on a cust
 uv sync
 ```
 
-### vLLM Endpoints
+### vLLM Endpoints (Generation Only)
 
 This repo assumes OpenAI-compatible vLLM servers.
 
 Set these env vars as needed:
 
 - `VLLM_GENERATION_BASE_URL` (default `http://localhost:8000/v1`)
-- `VLLM_EMBEDDINGS_BASE_URL` (default: same as generation)
 - `VLLM_API_KEY` (default `local`)
 
 Default models (override via env vars in `llm_endpoints.py`):
 
 - Generation: `Qwen/Qwen3-4B-Thinking-2507`
-- Embeddings: `sentence-transformers/all-MiniLM-L6-v2`
 - Judge/classifier (OpenAI): `gpt-5-mini`
+
+Embeddings are computed locally via `sentence-transformers` (default: `all-MiniLM-L6-v2`).
 
 ### Run: Generate Rollouts From JSONL
 
