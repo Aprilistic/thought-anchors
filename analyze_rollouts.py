@@ -433,7 +433,6 @@ def generate_chunk_summary(chunk_text: str) -> str:
         response = client.chat.completions.create(
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
             max_completion_tokens=20,
         )
 
@@ -482,7 +481,6 @@ Nickname (2-4 words max):
         response = client.chat.completions.create(
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
             max_completion_tokens=20,
         )
 
@@ -526,7 +524,6 @@ def label_chunk(problem_text: str, chunks: List[str], chunk_idx: int) -> Dict:
         response = client.chat.completions.create(
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": formatted_prompt}],
-            temperature=0.0,
             response_format={"type": "json_object"},
         )
 
