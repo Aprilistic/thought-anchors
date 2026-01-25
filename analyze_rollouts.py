@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from prompts import DAG_PROMPT
 import re
 from collections import Counter, defaultdict
-from llm_endpoints import ENDPOINTS
+from llm_endpoints import ENDPOINTS, get_vllm_judge_client
 from sentence_transformers import SentenceTransformer
 from utils import normalize_answer, split_solution_into_chunks
 import math
@@ -22,6 +22,29 @@ import multiprocessing as mp
 from functools import partial
 import scipy.stats as stats
 from matplotlib.lines import Line2D
+
+
+def _extract_first_json_object(text: str) -> Dict:
+    """Extract the first JSON object from a model response."""
+
+    if not isinstance(text, str):
+        raise ValueError("Expected string response")
+
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No '{' found in response")
+
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start : i + 1])
+
+    raise ValueError("Unterminated JSON object")
 
 
 # Class to hold arguments for importance calculation functions
@@ -283,10 +306,8 @@ plt.rcParams.update(
 # Load environment variables
 load_dotenv()
 
-# Set up OpenAI API key
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-if not client.api_key:
-    raise ValueError("OPENAI_API_KEY not found in .env file")
+# Set up judge/classifier client (local vLLM chat endpoint)
+client = get_vllm_judge_client()
 
 # Initialize the r1-distill-qwen-14b tokenizer
 tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-r1-distill-qwen-14b")
@@ -431,9 +452,10 @@ def generate_chunk_summary(chunk_text: str) -> str:
 
     try:
         response = client.chat.completions.create(
-            model=ENDPOINTS.openai_judge_model,
+            model=ENDPOINTS.vllm_judge_model,
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=20,
+            temperature=0.0,
+            max_tokens=32,
         )
 
         summary = response.choices[0].message.content.strip()
@@ -479,9 +501,10 @@ Nickname (2-4 words max):
 
     try:
         response = client.chat.completions.create(
-            model=ENDPOINTS.openai_judge_model,
+            model=ENDPOINTS.vllm_judge_model,
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=20,
+            temperature=0.0,
+            max_tokens=32,
         )
 
         nickname = response.choices[0].message.content.strip()
@@ -522,12 +545,13 @@ def label_chunk(problem_text: str, chunks: List[str], chunk_idx: int) -> Dict:
 
     try:
         response = client.chat.completions.create(
-            model=ENDPOINTS.openai_judge_model,
+            model=ENDPOINTS.vllm_judge_model,
             messages=[{"role": "user", "content": formatted_prompt}],
-            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=2048,
         )
 
-        result = json.loads(response.choices[0].message.content)
+        result = _extract_first_json_object(response.choices[0].message.content)
 
         # Add the chunk and its index to the result
         result["chunk"] = chunks[chunk_idx]

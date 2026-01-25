@@ -1,4 +1,5 @@
 import os
+import os
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
@@ -22,6 +23,12 @@ class LLMEndpoints:
     )
     vllm_api_key: str = os.getenv("VLLM_API_KEY", "EMPTY")
 
+    # vLLM judge/classifier server (OpenAI-compatible)
+    vllm_judge_base_url: str = os.getenv(
+        "VLLM_JUDGE_BASE_URL",
+        os.getenv("VLLM_GENERATION_BASE_URL", "http://localhost:8000/v1"),
+    )
+
     # Models
     vllm_generation_model: str = os.getenv(
         "VLLM_GENERATION_MODEL", "Qwen/Qwen3-4B-Thinking-2507"
@@ -30,7 +37,11 @@ class LLMEndpoints:
         "VLLM_EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    # OpenAI judge/classifier
+    vllm_judge_model: str = os.getenv(
+        "VLLM_JUDGE_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"
+    )
+
+    # Legacy (kept for compatibility; prefer vllm_judge_model)
     openai_judge_model: str = os.getenv("OPENAI_JUDGE_MODEL", "gpt-5-mini")
 
     # Default generation params for Qwen/Qwen3-4B-Thinking-2507
@@ -44,6 +55,9 @@ class LLMEndpoints:
 
     def embeddings_base_url(self) -> str:
         return _normalize_base_url(self.vllm_embeddings_base_url)
+
+    def judge_base_url(self) -> str:
+        return _normalize_base_url(self.vllm_judge_base_url)
 
     def generation_completions_url(self) -> str:
         return f"{self.generation_base_url()}/completions"
@@ -64,6 +78,10 @@ def openai_compat_client(*, base_url: str, api_key: Optional[str] = None) -> Ope
         base_url=_normalize_base_url(base_url),
         api_key=api_key or ENDPOINTS.vllm_api_key,
     )
+
+
+def get_vllm_judge_client() -> OpenAI:
+    return openai_compat_client(base_url=ENDPOINTS.judge_base_url())
 
 
 class OpenAICompatEmbeddingModel:

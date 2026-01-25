@@ -11,7 +11,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from openai import OpenAI
 from dotenv import load_dotenv
-from llm_endpoints import ENDPOINTS
+from llm_endpoints import ENDPOINTS, get_vllm_judge_client
 import torch
 import gc
 import traceback
@@ -194,10 +194,8 @@ def get_mlp_feature_importance(model, X):
 # Load environment variables
 load_dotenv()
 
-# Set up OpenAI API key
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-if not client.api_key:
-    raise ValueError("OPENAI_API_KEY not found in .env file")
+# Set up local vLLM judge client
+client = get_vllm_judge_client()
 
 # Global font size for plots
 FONT_SIZE = 15
@@ -479,10 +477,10 @@ def llm_attribution(
     try:
         # Make a single call to the LLM
         response = client.chat.completions.create(
-            model=ENDPOINTS.openai_judge_model,
+            model=ENDPOINTS.vllm_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_completion_tokens=4096,
+            max_tokens=4096,
         )
 
         # Extract response
