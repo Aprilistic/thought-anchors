@@ -875,6 +875,30 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
             base_solution = json.load(f)
             print(f"Problem {problem_idx}: Loaded existing base solution")
 
+            # Backward-compat: ensure expected derived fields exist
+            needs_save = False
+            if "prompt" not in base_solution:
+                base_solution["prompt"] = build_reasoning_prompt(
+                    instruction_text=get_instruction_text(problem)
+                )
+                needs_save = True
+
+            if "full_cot" not in base_solution:
+                if "solution" in base_solution and isinstance(
+                    base_solution["solution"], str
+                ):
+                    base_solution["full_cot"] = (
+                        f"{base_solution.get('prompt', '')}{base_solution['solution']}"
+                        if base_solution.get("prompt")
+                        else base_solution["solution"]
+                    )
+                    needs_save = True
+                elif "prompt" in base_solution and isinstance(
+                    base_solution["prompt"], str
+                ):
+                    base_solution["full_cot"] = base_solution["prompt"]
+                    needs_save = True
+
             # Recalculate accuracy for base solution if needed
             if not args.skip_recalculate and "solution" in base_solution:
                 extracted_answers = extract_answers(base_solution["solution"])
@@ -892,10 +916,11 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
                     print(f"Problem {problem_idx}: Updating base solution accuracy")
                     base_solution["answer"] = answer
                     base_solution["is_correct"] = is_correct
+                    needs_save = True
 
-                    # Save updated base solution
-                    with open(base_solution_file, "w", encoding="utf-8") as f:
-                        json.dump(base_solution, f, indent=2)
+            if needs_save:
+                with open(base_solution_file, "w", encoding="utf-8") as f:
+                    json.dump(base_solution, f, indent=2)
 
     # Generate base solution if needed
     if base_solution is None:
@@ -931,7 +956,12 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
             json.dump(base_solution, f, indent=2)
 
     # Get the source text for chunking
-    source_text = base_solution["full_cot"]
+    source_text = base_solution.get("full_cot") or base_solution.get("solution") or ""
+    if not source_text:
+        print(
+            f"Problem {problem_idx}: base_solution missing full_cot/solution; skipping"
+        )
+        return
     print(f"Problem {problem_idx}: Using full CoT for chunking")
 
     # Extract the solution part for chunking
