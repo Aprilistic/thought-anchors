@@ -76,28 +76,28 @@ parser.add_argument(
     "-ic",
     "--correct_rollouts_dir",
     type=str,
-    default=f"math-rollouts/{model}/temperature_0.6_top_p_0.95/correct_base_solution",
+    default=f"rollouts/{model}/temperature_0.6_top_p_0.95/correct_base_solution",
     help="Directory containing correct rollout data",
 )
 parser.add_argument(
     "-ii",
     "--incorrect_rollouts_dir",
     type=str,
-    default=f"math-rollouts/{model}/temperature_0.6_top_p_0.95/incorrect_base_solution",
+    default=f"rollouts/{model}/temperature_0.6_top_p_0.95/incorrect_base_solution",
     help="Directory containing incorrect rollout data",
 )
 parser.add_argument(
     "-icf",
     "--correct_forced_answer_rollouts_dir",
     type=str,
-    default=f"math-rollouts/{model}/temperature_0.6_top_p_0.95/correct_base_solution_forced_answer",
+    default=f"rollouts/{model}/temperature_0.6_top_p_0.95/correct_base_solution_forced_answer",
     help="Directory containing correct rollout data with forced answers",
 )
 parser.add_argument(
     "-iif",
     "--incorrect_forced_answer_rollouts_dir",
     type=str,
-    default=f"math-rollouts/{model}/temperature_0.6_top_p_0.95/incorrect_base_solution_forced_answer",
+    default=f"rollouts/{model}/temperature_0.6_top_p_0.95/incorrect_base_solution_forced_answer",
     help="Directory containing incorrect rollout data with forced answers",
 )
 parser.add_argument(
@@ -146,7 +146,7 @@ parser.add_argument(
     "-d",
     "--dag_dir",
     type=str,
-    default=f"archive/analysis/math/{model}",
+    default=f"archive/analysis/tasks/{model}",
     help="Directory containing DAG-improved chunks for token frequency analysis",
 )
 parser.add_argument(
@@ -415,7 +415,7 @@ def generate_chunk_summary(chunk_text: str) -> str:
     - "check answer" (for verification)
     - "list possibilities" (for enumeration)
     
-    The words should all be lowercase, with the exception of variable names, other proper nouns, or relevant math terms.
+    The words should all be lowercase, with the exception of variable names or other proper nouns.
     
     Ideally, the summary should be a single sentence that captures the main action or calculation in the chunk.
     - If there is a variable involved, include the variable in the summary.
@@ -461,21 +461,21 @@ def generate_problem_nickname(problem_text: str) -> str:
         A 2-4 word nickname for the problem
     """
     # Create a prompt to get a concise nickname
-    prompt = f"""Please provide a 2-4 word maximum nickname for this math problem that captures its essence. Focus on the main mathematical concept or scenario.
+    prompt = f"""Please provide a 2-4 word maximum nickname for this user instruction/task that captures its essence.
 
-    Examples:
-    - "Page counting" (for problems about counting digits in page numbers)
-    - "Coin probability" (for probability problems with coins)
-    - "Triangle area" (for geometry problems about triangles)
-    - "Modular arithmetic" (for problems involving remainders)
-    
-    The first word should be capitalized and the rest should be lowercase.
+Examples:
+- "Email rewrite" (for rewriting an email)
+- "Bug triage" (for diagnosing an error report)
+- "Meeting agenda" (for drafting an agenda)
+- "API explanation" (for explaining an API)
 
-    Problem:
-    {problem_text}
+The first word should be capitalized and the rest should be lowercase.
 
-    Nickname (2-4 words max):
-    """
+Instruction:
+{problem_text}
+
+Nickname (2-4 words max):
+"""
 
     try:
         response = client.chat.completions.create(
@@ -496,7 +496,7 @@ def generate_problem_nickname(problem_text: str) -> str:
 
     except Exception as e:
         print(f"Error generating problem nickname: {e}")
-        return "math problem"
+        return "user task"
 
 
 def label_chunk(problem_text: str, chunks: List[str], chunk_idx: int) -> Dict:
@@ -1346,7 +1346,13 @@ def analyze_problem(
     if force_metadata or "nickname" not in problem or not problem.get("nickname"):
         print(f"Problem {problem_dir.name}: Generating problem nickname...")
         try:
-            nickname = generate_problem_nickname(problem["problem"])
+            instruction_text = (
+                problem.get("instruction")
+                or problem.get("prompt")
+                or problem.get("problem")
+                or ""
+            )
+            nickname = generate_problem_nickname(instruction_text)
             problem["nickname"] = nickname
 
             # Save the updated problem.json
@@ -1355,7 +1361,7 @@ def analyze_problem(
 
         except Exception as e:
             print(f"Error generating nickname for problem {problem_dir.name}: {e}")
-            problem["nickname"] = "math problem"
+            problem["nickname"] = "user task"
 
     # Load base solution
     with open(base_solution_file, "r", encoding="utf-8") as f:
@@ -1692,7 +1698,13 @@ def analyze_problem(
 
         # Use the DAG prompt to label all chunks at once
         try:
-            labeled_chunks_result = label_chunk(problem["problem"], chunks, 0)
+            instruction_text = (
+                problem.get("instruction")
+                or problem.get("prompt")
+                or problem.get("problem")
+                or ""
+            )
+            labeled_chunks_result = label_chunk(instruction_text, chunks, 0)
 
             # Process the result into the expected format
             labeled_chunks = []

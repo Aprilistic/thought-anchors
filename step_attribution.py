@@ -23,6 +23,7 @@ import matplotlib.colors as mcolors
 # Define consistent category colors (copied from new_plots.py)
 CATEGORY_COLORS = {
     "Active Computation": "#34A853",
+    "Verbalized Evaluation Awareness": "#34A853",
     "Fact Retrieval": "#FBBC05",
     "Final Answer Emission": "#795548",
     "Plan Generation": "#EA4335",
@@ -569,7 +570,8 @@ def get_function_tag_prefix(chunk):
 def get_category_from_abbreviation(abbreviation):
     """Map function tag abbreviation to full category name."""
     abbrev_to_category = {
-        "AC": "Active Computation",
+        "AC": "Verbalized Evaluation Awareness",  # backward compat
+        "VEA": "Verbalized Evaluation Awareness",
         "FR": "Fact Retrieval",
         "FAE": "Final Answer Emission",
         "PG": "Plan Generation",

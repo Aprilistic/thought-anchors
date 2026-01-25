@@ -30,7 +30,9 @@ def get_chunk_ranges(full_text: str, chunks: List[str]) -> List[Tuple[int, int]]
             # Search for the sequence of words, allowing for different whitespace
             for i in range(current_pos, len(full_text) - len(normalized_chunk)):
                 # Check if this could be the start of our chunk
-                text_window = full_text[i : i + len(normalized_chunk) + 20]  # Add some buffer
+                text_window = full_text[
+                    i : i + len(normalized_chunk) + 20
+                ]  # Add some buffer
                 normalized_window = re.sub(r"\s+", " ", text_window).strip()
 
                 if normalized_window.startswith(normalized_chunk):
@@ -38,7 +40,9 @@ def get_chunk_ranges(full_text: str, chunks: List[str]) -> List[Tuple[int, int]]
                     break
 
                 # If not found with window, try word by word matching
-                if i == current_pos + 100:  # Limit detailed search to avoid performance issues
+                if (
+                    i == current_pos + 100
+                ):  # Limit detailed search to avoid performance issues
                     for j in range(current_pos, len(full_text) - 10):
                         # Try to match first word
                         if re.match(
@@ -99,7 +103,9 @@ def get_chunk_token_ranges(
     chunk_token_ranges = []
 
     for chunk_start, chunk_end in chunk_ranges:
-        chunk_start_token = tokenizer.encode(text[:chunk_start], add_special_tokens=False)
+        chunk_start_token = tokenizer.encode(
+            text[:chunk_start], add_special_tokens=False
+        )
         chunk_start_token_idx = len(chunk_start_token)
         chunk_end_token = tokenizer.encode(text[:chunk_end], add_special_tokens=False)
         chunk_end_token_idx = len(chunk_end_token)
@@ -155,6 +161,47 @@ def extract_boxed_answers(text: str) -> List[str]:
             answers.append(answer)
 
     return answers if answers else [""]
+
+
+def extract_final_answer_lines(text: str) -> List[str]:
+    """Extract answers following a 'Final Answer:' marker.
+
+    This is a lightweight, task-agnostic alternative to \boxed{} parsing.
+    """
+
+    if not isinstance(text, str) or not text:
+        return []
+
+    answers: List[str] = []
+    pattern = re.compile(r"(?:^|\n)\s*Final\s*Answer\s*:\s*(.+)", re.IGNORECASE)
+    for m in pattern.finditer(text):
+        ans = m.group(1).strip()
+        # Stop at the first line break after the marker.
+        ans = ans.splitlines()[0].strip()
+        if ans:
+            answers.append(ans)
+    return answers
+
+
+def extract_answers(text: str) -> List[str]:
+    """Extract candidate answers from a completion.
+
+    Preference order:
+    - \boxed{...} (math datasets)
+    - 'Final Answer:' marker (general instruction datasets)
+    """
+
+    answers: List[str] = []
+
+    for a in extract_boxed_answers(text):
+        if isinstance(a, str) and a.strip():
+            answers.append(a.strip())
+
+    for a in extract_final_answer_lines(text):
+        if a not in answers:
+            answers.append(a)
+
+    return answers
 
 
 def normalize_answer(answer: str, use_sympy: bool = False) -> str:
@@ -502,7 +549,9 @@ def load_math_problems(
         # Filter by level if specified
         if level is not None:
             indexed_problems = [
-                (i, problem) for i, problem in indexed_problems if problem.get("level") == level
+                (i, problem)
+                for i, problem in indexed_problems
+                if problem.get("level") == level
             ]
 
         # Sample if needed
@@ -521,4 +570,70 @@ def load_math_problems(
         return indexed_problems
     except Exception as e:
         print(f"Error loading problems: {e}")
+        return []
+
+
+def load_jsonl_tasks(
+    jsonl_path: str,
+    num_tasks: Optional[int] = None,
+    seed: int = 42,
+    shuffle: bool = False,
+    include_ids: Optional[List[str]] = None,
+) -> List[Tuple[int, Dict]]:
+    """Load instruction-style tasks from a JSONL file.
+
+    Expected each line to be a JSON object. Text is taken from the first present key
+    in: instruction, prompt, task, problem.
+    """
+
+    tasks: List[Tuple[int, Dict]] = []
+    rng = random.Random(seed)
+
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line_idx, line in enumerate(f):
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+
+                if not isinstance(obj, dict):
+                    continue
+
+                problem_id = obj.get("problem_idx")
+                if problem_id is not None:
+                    problem_id = str(problem_id)
+
+                if include_ids is not None:
+                    if problem_id is None or problem_id not in include_ids:
+                        continue
+
+                text = ""
+                for key in ("instruction", "prompt", "task", "problem"):
+                    val = obj.get(key)
+                    if isinstance(val, str) and val.strip():
+                        text = val.strip()
+                        break
+
+                # Keep original fields for analysis; add a normalized 'instruction' field.
+                task: Dict = dict(obj)
+                task["instruction"] = text
+                if problem_id is not None:
+                    task["problem_idx"] = problem_id
+
+                tasks.append((len(tasks), task))
+
+        if shuffle:
+            rng.shuffle(tasks)
+
+        if num_tasks is not None:
+            tasks = tasks[:num_tasks]
+
+        return tasks
+    except Exception as e:
+        print(f"Error loading JSONL tasks from {jsonl_path}: {e}")
         return []

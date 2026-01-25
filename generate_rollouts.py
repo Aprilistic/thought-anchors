@@ -7,13 +7,15 @@ import asyncio
 import httpx
 from tqdm import tqdm
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from utils import (
+    extract_answers,
     extract_boxed_answers,
     check_answer,
     split_solution_into_chunks,
     load_math_problems,
+    load_jsonl_tasks,
 )
 from transformers import TextStreamer
 from llm_endpoints import ENDPOINTS
@@ -41,6 +43,26 @@ parser.add_argument(
     default=ENDPOINTS.vllm_generation_model,
     help="Model to use",
 )
+
+parser.add_argument(
+    "--dataset_jsonl",
+    type=str,
+    default="fortress_prompts.jsonl",
+    help="Path to a JSONL dataset of tasks/instructions (optional)",
+)
+parser.add_argument(
+    "--dataset",
+    type=str,
+    default="jsonl",
+    choices=["jsonl", "math"],
+    help="Dataset source to use",
+)
+parser.add_argument(
+    "--shuffle",
+    default=False,
+    action="store_true",
+    help="Shuffle dataset before sampling",
+)
 parser.add_argument(
     "-b",
     "--base_solution_type",
@@ -61,11 +83,11 @@ parser.add_argument(
     "-o",
     "--output_dir",
     type=str,
-    default="math_rollouts",
+    default="rollouts",
     help="Directory to save results",
 )
 parser.add_argument(
-    "-np", "--num_problems", type=int, default=100, help="Number of problems to sample"
+    "-np", "--num_problems", type=int, default=100, help="Number of tasks to sample"
 )
 parser.add_argument(
     "-nr", "--num_rollouts", type=int, default=100, help="Number of rollouts per chunk"
@@ -673,6 +695,33 @@ async def handle_streaming_response(api_url: str, headers: Dict, payload: Dict) 
         return {"error": f"Streaming exception: {str(e)}"}
 
 
+def get_instruction_text(problem: Dict) -> str:
+    for key in ("instruction", "prompt", "task", "problem"):
+        val = problem.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def build_reasoning_prompt(
+    *,
+    instruction_text: str,
+    reasoning_prefix: str = "",
+    force_final_answer: bool = False,
+) -> str:
+    prompt = (
+        "Follow the user instruction carefully. "
+        "Provide your reasoning in <think>...</think>, then give a concise final answer.\n\n"
+        f"Instruction: {instruction_text}\n\n"
+        "Assistant:\n<think>\n"
+    )
+    if reasoning_prefix:
+        prompt += reasoning_prefix
+    if force_final_answer:
+        prompt += "\n</think>\n\nFinal Answer: "
+    return prompt
+
+
 async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dict:
     """
     Generate a base solution for a problem using Novita API.
@@ -684,8 +733,8 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
     Returns:
         Dictionary with the generated solution
     """
-    # Create prompt similar to generate_cots_math.py
-    prompt = f"Solve this math problem step by step. You MUST put your final answer in \\boxed{{}}. Problem: {problem['problem']} Solution: \n<think>\n"
+    instruction_text = get_instruction_text(problem)
+    prompt = build_reasoning_prompt(instruction_text=instruction_text)
 
     max_retries = 3
     retry_delay = 2
@@ -698,7 +747,7 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
             solution_text = response["text"]
 
             # Extract answer and check correctness
-            extracted_answers = extract_boxed_answers(solution_text)
+            extracted_answers = extract_answers(solution_text)
             answer = extracted_answers[0] if extracted_answers else ""
             is_correct = False
 
@@ -748,11 +797,12 @@ async def generate_rollout(
     # Remove the current chunk from the prefix to see how it gets regenerated
     prefix_without_chunk = full_cot_prefix.replace(chunk_text, "").strip()
 
-    # Create prompt with the prefix without the current chunk
-    prompt = f"Solve this math problem step by step. You MUST put your final answer in \\boxed{{}}. Problem: {problem['problem']} Solution: \n<think>\n{prefix_without_chunk}"
-
-    if rollout_type == "forced_answer":
-        prompt += "\n</think>\n\nTherefore, the final answers is \\boxed{"
+    instruction_text = get_instruction_text(problem)
+    prompt = build_reasoning_prompt(
+        instruction_text=instruction_text,
+        reasoning_prefix=prefix_without_chunk,
+        force_final_answer=(rollout_type == "forced_answer"),
+    )
 
     max_retries = args.max_retries
     retry_delay = 2 if max_retries > 0 else None
@@ -766,7 +816,7 @@ async def generate_rollout(
             chunk_resampled = split_solution_into_chunks(rollout_text)[0]
 
             # Extract answer and check correctness
-            extracted_answers = extract_boxed_answers(
+            extracted_answers = extract_answers(
                 f"{prompt}{rollout_text}"
                 if rollout_type == "forced_answer"
                 else rollout_text
@@ -827,7 +877,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
 
             # Recalculate accuracy for base solution if needed
             if not args.skip_recalculate and "solution" in base_solution:
-                extracted_answers = extract_boxed_answers(base_solution["solution"])
+                extracted_answers = extract_answers(base_solution["solution"])
                 answer = extracted_answers[0] if extracted_answers else ""
                 is_correct = False
 
@@ -854,16 +904,21 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
         )
         base_solution = await generate_base_solution(problem, args.temperature)
 
-        if args.base_solution_type == "correct" and (
-            "is_correct" not in base_solution or not base_solution["is_correct"]
+        has_gt = bool(problem.get("gt_answer"))
+        if (
+            has_gt
+            and args.base_solution_type == "correct"
+            and ("is_correct" not in base_solution or not base_solution["is_correct"])
         ):
             print(base_solution["solution"])
             print(
                 f"Problem {problem_idx}: Base solution is INCORRECT or has error. Retrying..."
             )
             return await process_problem(problem_idx, problem)
-        elif args.base_solution_type == "incorrect" and (
-            "is_correct" not in base_solution or base_solution["is_correct"]
+        elif (
+            has_gt
+            and args.base_solution_type == "incorrect"
+            and ("is_correct" not in base_solution or base_solution["is_correct"])
         ):
             print(base_solution["solution"])
             print(
@@ -947,7 +1002,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
                     updated_count = 0
                     for rollout in existing_solutions:
                         if "rollout" in rollout and "error" not in rollout:
-                            extracted_answers = extract_boxed_answers(
+                            extracted_answers = extract_answers(
                                 rollout["full_cot"]
                                 if args.rollout_type == "forced_answer"
                                 else rollout["rollout"]
@@ -999,13 +1054,12 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
                     # Remove the current chunk from the prefix to see how it gets regenerated
                     prefix_without_chunk = full_prefix.replace(chunk, "").strip()
 
-                    # Create prompt with the prefix without the current chunk
-                    prompt = f"Solve this math problem step by step. You MUST put your final answer in \\boxed{{}}. Problem: {problem['problem']} Solution: \n<think>\n{prefix_without_chunk}"
-
-                    if args.rollout_type == "forced_answer":
-                        prompt += (
-                            "\n</think>\n\nTherefore, the final answers is \\boxed{"
-                        )
+                    instruction_text = get_instruction_text(problem)
+                    prompt = build_reasoning_prompt(
+                        instruction_text=instruction_text,
+                        reasoning_prefix=prefix_without_chunk,
+                        force_final_answer=(args.rollout_type == "forced_answer"),
+                    )
 
                     prompts.append(prompt)
 
@@ -1034,7 +1088,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
 
                     # Extract answer and check correctness
                     prompt = prompts[i]
-                    extracted_answers = extract_boxed_answers(
+                    extracted_answers = extract_answers(
                         f"{prompt}{rollout_text}"
                         if args.rollout_type == "forced_answer"
                         else rollout_text
@@ -1084,33 +1138,55 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
 
 async def main():
     """Main function to run the script."""
-    # Load problems
-    problems = load_math_problems(
-        problem_type=args.type,
-        level=args.level,
-        num_problems=args.num_problems,
-        split=args.split,
-        include_problems=args.include_problems,
-    )
+    # Load tasks
+    if args.dataset == "jsonl":
+        include_ids = (
+            [s.strip() for s in args.include_problems.split(",") if s.strip()]
+            if args.include_problems
+            else None
+        )
+        problems = load_jsonl_tasks(
+            args.dataset_jsonl,
+            num_tasks=args.num_problems,
+            seed=args.seed,
+            shuffle=args.shuffle,
+            include_ids=include_ids,
+        )
+    else:
+        problems = load_math_problems(
+            problem_type=args.type,
+            level=args.level,
+            num_problems=args.num_problems,
+            split=args.split,
+            include_problems=(
+                [int(s) for s in args.include_problems.split(",") if s.strip()]
+                if args.include_problems
+                else None
+            ),
+        )
 
     if args.exclude_problems:
-        exclude_problems = [int(id) for id in args.exclude_problems.split(",")]
-        problems = [
-            problem for problem in problems if problem[0] not in exclude_problems
+        exclude_list = [
+            s.strip() for s in args.exclude_problems.split(",") if s.strip()
         ]
-
-    if args.include_problems:
-        include_problems = [int(id) for id in args.include_problems.split(",")]
-        problems = [problem for problem in problems if problem[0] in include_problems]
+        if args.dataset == "jsonl":
+            problems = [
+                (i, p)
+                for (i, p) in problems
+                if str(p.get("problem_idx", "")) not in exclude_list
+            ]
+        else:
+            exclude_ints = [int(x) for x in exclude_list]
+            problems = [(i, p) for (i, p) in problems if i not in exclude_ints]
 
     if not problems:
         print(f"No problems loaded. Exiting.")
         exit(1)
 
-    print(f"Loaded {len(problems)} problems.")
+    print(f"Loaded {len(problems)} tasks.")
 
     # Process problems
-    for problem_idx, problem in tqdm(problems, desc="Processing problems"):
+    for problem_idx, problem in tqdm(problems, desc="Processing tasks"):
         await process_problem(problem_idx, problem)
 
 

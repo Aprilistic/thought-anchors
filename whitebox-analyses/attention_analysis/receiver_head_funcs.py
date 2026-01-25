@@ -49,7 +49,9 @@ def get_problem_vert_scores(
     control_depth: bool = False,
 ) -> np.ndarray:
     problem_num, is_correct = problem_ci
-    text, sentences_w_spacing = get_problem_text_sentences(problem_num, is_correct, model_name)
+    text, sentences_w_spacing = get_problem_text_sentences(
+        problem_num, is_correct, model_name
+    )
     layer_head_vert_scores = get_all_heads_vert_scores(
         text,
         sentences_w_spacing,
@@ -58,7 +60,9 @@ def get_problem_vert_scores(
         control_depth=control_depth,
         score_type="mean",
     )
-    target_layer_head_vert_scores = layer_head_vert_scores[layer_head[:, 0], layer_head[:, 1], :]
+    target_layer_head_vert_scores = layer_head_vert_scores[
+        layer_head[:, 0], layer_head[:, 1], :
+    ]
     return target_layer_head_vert_scores
 
 
@@ -83,7 +87,6 @@ def get_all_heads_vert_scores(
     for layer in range(layers):
         layer_scores = []
         for head in range(heads):
-
             vert_scores = get_vert_score_wrapped(
                 text,
                 sentences,
@@ -103,18 +106,21 @@ def get_all_heads_vert_scores(
 
 
 def get_top_k_layer_head_kurts(
-    layer_head_kurts_mean: np.ndarray,
-    top_k: int = 20
+    layer_head_kurts_mean: np.ndarray, top_k: int = 20
 ) -> np.ndarray:
     kurts_mean_flat = layer_head_kurts_mean.flatten()
 
-    valid_indices = np.where(~np.isnan(kurts_mean_flat))[0]  # indices where it's not NaN
+    valid_indices = np.where(~np.isnan(kurts_mean_flat))[
+        0
+    ]  # indices where it's not NaN
     valid_values = kurts_mean_flat[valid_indices]
 
     top_k = min(top_k, len(valid_values))  # in case fewer than 20 valid values
     top_indices_in_valid = np.argpartition(valid_values, -top_k)[-top_k:]
 
-    top_indices_in_valid = top_indices_in_valid[np.argsort(-valid_values[top_indices_in_valid])]
+    top_indices_in_valid = top_indices_in_valid[
+        np.argsort(-valid_values[top_indices_in_valid])
+    ]
 
     top_flat_indices = valid_indices[top_indices_in_valid]
     return top_flat_indices
@@ -145,7 +151,9 @@ def get_top_k_receiver_heads(
     resp_layer_head_kurts = np.array(resp_layer_head_kurts)
     layer_head_kurts_mean = np.mean(resp_layer_head_kurts, axis=0)
     top_k_layer_head_kurts = get_top_k_layer_head_kurts(layer_head_kurts_mean, top_k)
-    layer_head = np.array(np.unravel_index(top_k_layer_head_kurts, layer_head_kurts_mean.shape)).T
+    layer_head = np.array(
+        np.unravel_index(top_k_layer_head_kurts, layer_head_kurts_mean.shape)
+    ).T
     layer_head = layer_head.astype(int)
     assert layer_head.shape[0] == top_k
     assert layer_head.shape[1] == 2
@@ -155,13 +163,13 @@ def get_top_k_receiver_heads(
 def get_model_rollouts_root(model_name: str = "qwen-14b") -> str:
     if "qwen" in model_name:
         dir_root = os.path.join(
-            "math-rollouts",
+            "rollouts",
             "deepseek-r1-distill-qwen-14b",
             "temperature_0.6_top_p_0.95",
         )
     elif "llama" in model_name:
         dir_root = os.path.join(
-            "math-rollouts",
+            "rollouts",
             "deepseek-r1-distill-llama-8b",
             "temperature_0.6_top_p_0.95",
         )
@@ -172,9 +180,7 @@ def get_model_rollouts_root(model_name: str = "qwen-14b") -> str:
 
 @pkld
 def get_problem_text_sentences(
-    problem_num: Union[int, str],
-    is_correct: bool,
-    model_name: str = "qwen-14b"
+    problem_num: Union[int, str], is_correct: bool, model_name: str = "qwen-14b"
 ) -> Tuple[str, List[str]]:
     dir_root = get_model_rollouts_root(model_name)
     if is_correct:
@@ -203,7 +209,6 @@ def get_all_problems_vert_scores(
     proximity_ignore: int = 4,
     control_depth: bool = False,
 ) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
-
     dir_root = get_model_rollouts_root(model_name)
 
     correct_incorrect = ["correct_base_solution", "incorrect_base_solution"]
@@ -219,9 +224,13 @@ def get_all_problems_vert_scores(
         dir_ci = os.path.join(dir_root, ci)
         problems = os.listdir(dir_ci)
         for idx_problem, problem in enumerate(problems):
-            if problem == 'problem_3935': # 13k tokens long, too intense on the RAM/VRAM
+            if (
+                problem == "problem_3935"
+            ):  # 13k tokens long, too intense on the RAM/VRAM
                 continue
-            text, sentences_w_spacing = get_problem_text_sentences(problem, is_correct, model_name)
+            text, sentences_w_spacing = get_problem_text_sentences(
+                problem, is_correct, model_name
+            )
 
             # The model will be run.
             # Its sentence-averaged attention weight matrices will be cached.
@@ -243,8 +252,7 @@ def get_all_problems_vert_scores(
 
 
 def get_receiver_head_scores(
-    top_k_layer_head_kurts: np.ndarray,
-    layer_head_verts: np.ndarray
+    top_k_layer_head_kurts: np.ndarray, layer_head_verts: np.ndarray
 ) -> np.ndarray:
     rec_head_scores = []
     for layer, head in top_k_layer_head_kurts:
@@ -261,7 +269,6 @@ def get_all_receiver_head_scores(
     control_depth: bool = False,
     top_k: int = 20,
 ) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
-
     print("Getting top k layer head kurts")
     top_k_layer_head_kurts = get_top_k_receiver_heads(
         model_name=model_name,

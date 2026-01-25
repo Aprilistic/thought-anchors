@@ -19,7 +19,7 @@ def get_type2color():
     """Get mapping from taxonomic type to color."""
     type2color = {
         "plan_generation": "tab:red",
-        "active_computation": "tab:green",
+        "verbalized_evaluation_awareness": "tab:green",
         "fact_retrieval": "tab:orange",
         "uncertainty_management": "tab:purple",
         "result_consolidation": "tab:blue",
@@ -34,7 +34,7 @@ def get_type2label():
     """Get mapping from taxonomic type to display label."""
     type2label = {
         "plan_generation": "Plan\nGeneration",
-        "active_computation": "Active\nComputation",
+        "verbalized_evaluation_awareness": "Verbalized\nEval\nAwareness",
         "fact_retrieval": "Fact\nRetrieval",
         "uncertainty_management": "Uncertainty\nMgmt.",
         "result_consolidation": "Result\nConsolidation",
@@ -111,7 +111,8 @@ def plot_receiver_taxonomy(
 
     # Load the CSV file
     csv_path = (
-        Path(csv_dir) / f"receiver_head_scores_all_{model_name}_k{top_k}_pi{proximity_ignore}.csv"
+        Path(csv_dir)
+        / f"receiver_head_scores_all_{model_name}_k{top_k}_pi{proximity_ignore}.csv"
     )
     if not csv_path.exists():
         print(f"Error: CSV file not found: {csv_path}")
@@ -125,16 +126,14 @@ def plot_receiver_taxonomy(
             df = df[df["pre_convergence"] == True]
             print(f"Filtered to {len(df)} pre-convergence sentences")
         else:
-            print(
-                "Warning: 'pre_convergence' column not found in CSV. Using all data."
-            )
+            print("Warning: 'pre_convergence' column not found in CSV. Using all data.")
 
     # Define tags to plot
     if tags_to_plot is None:
         tags_to_plot = [
             "plan_generation",
             "fact_retrieval",
-            "active_computation",
+            "verbalized_evaluation_awareness",
             "uncertainty_management",
             "result_consolidation",
         ]
@@ -279,12 +278,8 @@ def plot_receiver_taxonomy(
                 common_problems = set(df_tag0["problem_id"]) & set(
                     df_tag1["problem_id"]
                 )
-                df_tag0_common = df_tag0[
-                    df_tag0["problem_id"].isin(common_problems)
-                ]
-                df_tag1_common = df_tag1[
-                    df_tag1["problem_id"].isin(common_problems)
-                ]
+                df_tag0_common = df_tag0[df_tag0["problem_id"].isin(common_problems)]
+                df_tag1_common = df_tag1[df_tag1["problem_id"].isin(common_problems)]
 
                 if len(df_tag0_common) > 1:
                     # Sort by problem_id to ensure matching
@@ -351,7 +346,7 @@ def plot_receiver_taxonomy(
     # Add title
     model_display = "Qwen-14B" if "qwen" in model_name.lower() else model_name
     plt.title(
-        f"Receiver-head scores by sentence category",# ({model_display}, k={top_k})",
+        f"Receiver-head scores by sentence category",  # ({model_display}, k={top_k})",
         fontsize=11,
     )
     plt.ylim(0, 0.00042)
@@ -361,7 +356,8 @@ def plot_receiver_taxonomy(
     output_path.mkdir(parents=True, exist_ok=True)
     suffix = "_pre_conv" if pre_convergence_only else ""
     fp_out = (
-        output_path / f"receiver_taxonomy_{model_name}_k{top_k}{suffix}_pi{proximity_ignore}.png"
+        output_path
+        / f"receiver_taxonomy_{model_name}_k{top_k}{suffix}_pi{proximity_ignore}.png"
     )
 
     plt.subplots_adjust(bottom=0.2, top=0.85, left=0.12, right=0.95)
@@ -439,5 +435,5 @@ if __name__ == "__main__":
         random_ef=args.random_ef,
         output_dir=args.output_dir,
         pre_convergence_only=args.pre_convergence_only,
-        proximity_ignore=args.proximity_ignore
+        proximity_ignore=args.proximity_ignore,
     )

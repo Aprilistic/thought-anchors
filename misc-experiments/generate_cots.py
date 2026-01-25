@@ -11,7 +11,7 @@ from typing import List, Dict, Tuple, Optional
 from dotenv import load_dotenv
 from datasets import load_dataset
 import argparse
-from utils import extract_boxed_answers, check_answer
+from utils import extract_answers, extract_boxed_answers, check_answer
 from transformers import AutoTokenizer
 from llm_endpoints import ENDPOINTS
 
@@ -224,8 +224,17 @@ async def generate_solution(
     Returns:
         Dictionary with the generated solution
     """
-    # Create prompt
-    prompt = f"Solve this math problem step by step. You MUST put your final answer in \\boxed{{}}. Problem: {problem['problem']} Solution: \n<think>\n"
+    instruction_text = (
+        problem.get("instruction")
+        if isinstance(problem.get("instruction"), str)
+        else problem.get("problem", "")
+    )
+    prompt = (
+        "Follow the user instruction carefully. "
+        "Provide your reasoning in <think>...</think>, then give a concise final answer.\n\n"
+        f"Instruction: {instruction_text}\n\n"
+        "Assistant:\n<think>\n"
+    )
 
     max_retries = 3
     retry_delay = 2
@@ -259,7 +268,7 @@ async def generate_solution(
                 full_cot = f"{prompt}{reasoning}\n</think>\n{solution_text}"
 
             # Extract answer and check correctness
-            extracted_answers = extract_boxed_answers(solution_text)
+            extracted_answers = extract_answers(solution_text)
             answer = extracted_answers[0] if extracted_answers else ""
             is_correct = False
 
@@ -355,7 +364,7 @@ async def generate_solutions_parallel(
                 continue
 
             # Extract answer and check correctness with updated check_answer function
-            extracted_answers = extract_boxed_answers(sol["solution"])
+            extracted_answers = extract_answers(sol["solution"])
             answer = extracted_answers[0] if extracted_answers else ""
 
             # Check if answer is empty
@@ -652,7 +661,9 @@ def create_logit_bias(tokens_str: str, bias_strength: int) -> Dict[str, float]:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Generate solutions for math problems")
+    parser = argparse.ArgumentParser(
+        description="Generate solutions for user instructions"
+    )
     parser.add_argument(
         "-m",
         "--model",

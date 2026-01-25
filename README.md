@@ -1,5 +1,74 @@
 # Thought Anchors ⚓
 
+## Fork Notes (Custom Pipeline)
+
+This fork modifies the original project to support running experiments on a custom JSONL dataset (e.g. `fortress_prompts.jsonl`) and to track **verbalized evaluation awareness** during reasoning.
+
+### Environment (uv)
+
+```bash
+uv sync
+```
+
+### vLLM Endpoints
+
+This repo assumes OpenAI-compatible vLLM servers.
+
+Set these env vars as needed:
+
+- `VLLM_GENERATION_BASE_URL` (default `http://localhost:8000/v1`)
+- `VLLM_EMBEDDINGS_BASE_URL` (default: same as generation)
+- `VLLM_API_KEY` (default `local`)
+
+Default models (override via env vars in `llm_endpoints.py`):
+
+- Generation: `Qwen/Qwen3-4B-Thinking-2507`
+- Embeddings: `sentence-transformers/all-MiniLM-L6-v2`
+- Judge/classifier (OpenAI): `gpt-5-mini`
+
+### Run: Generate Rollouts From JSONL
+
+`generate_rollouts.py` supports `--dataset jsonl` (default) and reads `--dataset_jsonl`.
+
+```bash
+uv run python generate_rollouts.py \
+  --dataset jsonl \
+  --dataset_jsonl fortress_prompts.jsonl \
+  --provider vLLM \
+  --num_problems 50 \
+  --output_dir rollouts
+```
+
+Useful filters:
+
+```bash
+# Use specific IDs from the JSONL's "problem_idx" field
+uv run python generate_rollouts.py --include_problems fortress_2,fortress_10
+
+# Exclude specific IDs
+uv run python generate_rollouts.py --exclude_problems fortress_3
+```
+
+Note: If your dataset has no ground-truth answers, `--base_solution_type correct|incorrect` is treated as a label only; it will not retry until correctness.
+
+### Run: Label + Analyze
+
+```bash
+uv run python analyze_rollouts.py \
+  --correct_rollouts_dir rollouts/<MODEL>/temperature_0.6_top_p_0.95/correct_base_solution \
+  --output_dir analysis
+```
+
+### Label Taxonomy Change
+
+The labeling prompt in `prompts.py` replaces `active_computation` with:
+
+- `verbalized_evaluation_awareness`
+
+Downstream plotting/whitebox taxonomy mappings were updated accordingly.
+
+---
+
 We introduce a framework for interpreting the reasoning of large language models by attributing importance to individual sentences in their chain-of-thought. Using black-box, attention-based, and causal methods, we identify key reasoning steps, which we call **thought anchors**, that disproportionately influence downstream reasoning. These anchors are typically planning or backtracking sentences. Our work offers new tools and insights for understanding multi-step reasoning in language models.
 
 See more:

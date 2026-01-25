@@ -15,9 +15,7 @@ def paired_ttests(df, key="counterfactual_importance_kl"):
 
     df[key] = df[key].abs()
 
-    df_grp = (
-        df.groupby(["problem_idx", "function_tags"])[key].median().reset_index()
-    )
+    df_grp = df.groupby(["problem_idx", "function_tags"])[key].median().reset_index()
 
     for tag0, df_tag0 in df_grp.groupby("function_tags"):
         for tag1, df_tag1 in df_grp.groupby("function_tags"):
@@ -32,25 +30,17 @@ def paired_ttests(df, key="counterfactual_importance_kl"):
             overlapping_problems = set(df_tag0["problem_idx"]) & set(
                 df_tag1["problem_idx"]
             )
-            df_tag0_ = df_tag0[
-                df_tag0["problem_idx"].isin(overlapping_problems)
-            ]
-            df_tag1_ = df_tag1[
-                df_tag1["problem_idx"].isin(overlapping_problems)
-            ]
+            df_tag0_ = df_tag0[df_tag0["problem_idx"].isin(overlapping_problems)]
+            df_tag1_ = df_tag1[df_tag1["problem_idx"].isin(overlapping_problems)]
             # print(df_tag0_)
 
             df_tag0_.set_index("problem_idx", inplace=True)
             df_tag1_.set_index("problem_idx", inplace=True)
 
-            t, p = stats.ttest_rel(
-                df_tag0_[key], df_tag1_[key], nan_policy="omit"
-            )
+            t, p = stats.ttest_rel(df_tag0_[key], df_tag1_[key], nan_policy="omit")
             M_0 = df_tag0_[key].mean()
             M_1 = df_tag1_[key].mean()
-            print(
-                f"{tag0} ({M_0:.3f}) vs {tag1} ({M_1:.3f}): t={t:.2f}, p={p:.3f}"
-            )
+            print(f"{tag0} ({M_0:.3f}) vs {tag1} ({M_1:.3f}): t={t:.2f}, p={p:.3f}")
 
 
 def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
@@ -76,7 +66,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
         lambda x: " ".join(word.capitalize() for word in x.split("_"))
     )
     categories = {
-        "Active Computation",
+        "Verbalized Evaluation Awareness",
         "Fact Retrieval",
         "Plan Generation",
         "Uncertainty Management",
@@ -86,9 +76,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
 
     # Calculate per-problem medians first, then aggregate
     df_grp = (
-        df.groupby(["problem_idx", "function_tags"])[
-            [key, "normalized_position"]
-        ]
+        df.groupby(["problem_idx", "function_tags"])[[key, "normalized_position"]]
         .median()
         .reset_index()
     )
@@ -110,6 +98,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
     # Define category colors
     CATEGORY_COLORS = {
         "Active Computation": "#34A853",
+        "Verbalized Evaluation Awareness": "#34A853",
         "Fact Retrieval": "#FBBC05",
         "Final Answer Emission": "#795548",
         "Plan Generation": "#EA4335",
@@ -221,9 +210,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
 
     # Save plot
     plot_filename = f"{model}_alpha_{smoothing}_{key}_category_effects.png"
-    plt.savefig(
-        os.path.join(output_dir, plot_filename), dpi=300, bbox_inches="tight"
-    )
+    plt.savefig(os.path.join(output_dir, plot_filename), dpi=300, bbox_inches="tight")
     plt.close()
 
     print(f"Created plot for {key}: {plot_filename}")
@@ -260,9 +247,9 @@ if __name__ == "__main__":
                     convergence_cnt += 1
                     if convergence_cnt >= convergence_check:
                         is_converged = True
-                        problem_idx_to_convergence[
-                            problem_data["problem_idx"]
-                        ] = convergence_cnt
+                        problem_idx_to_convergence[problem_data["problem_idx"]] = (
+                            convergence_cnt
+                        )
             else:
                 convergence_cnt = 0
 
@@ -270,9 +257,7 @@ if __name__ == "__main__":
             logit = np.log(acc_for_logit / (1 - acc_for_logit))
             if prev_acc is not None:
                 prev_acc_for_logit = min(max(prev_acc, 0.01), 0.99)
-                prev_logit = np.log(
-                    prev_acc_for_logit / (1 - prev_acc_for_logit)
-                )
+                prev_logit = np.log(prev_acc_for_logit / (1 - prev_acc_for_logit))
                 delta_acc = acc - prev_acc
                 delta_logit = logit - prev_logit
             else:
@@ -280,9 +265,7 @@ if __name__ == "__main__":
                 delta_logit = None
             prev_acc = acc
             row = {}
-            row["problem_idx"] = (
-                problem_data["problem_idx"] + f"_{base_correct}"
-            )
+            row["problem_idx"] = problem_data["problem_idx"] + f"_{base_correct}"
             row["delta_acc"] = delta_acc
             row["delta_logit"] = delta_logit
             row["function_tags"] = chunk["function_tags"][0]
