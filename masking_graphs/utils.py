@@ -31,7 +31,9 @@ def get_chunk_ranges(full_text: str, chunks: List[str]) -> List[Tuple[int, int]]
             # Search for the sequence of words, allowing for different whitespace
             for i in range(current_pos, len(full_text) - len(normalized_chunk)):
                 # Check if this could be the start of our chunk
-                text_window = full_text[i : i + len(normalized_chunk) + 20]  # Add some buffer
+                text_window = full_text[
+                    i : i + len(normalized_chunk) + 20
+                ]  # Add some buffer
                 normalized_window = re.sub(r"\s+", " ", text_window).strip()
 
                 if normalized_window.startswith(normalized_chunk):
@@ -39,7 +41,9 @@ def get_chunk_ranges(full_text: str, chunks: List[str]) -> List[Tuple[int, int]]
                     break
 
                 # If not found with window, try word by word matching
-                if i == current_pos + 100:  # Limit detailed search to avoid performance issues
+                if (
+                    i == current_pos + 100
+                ):  # Limit detailed search to avoid performance issues
                     for j in range(current_pos, len(full_text) - 10):
                         # Try to match first word
                         if re.match(
@@ -100,7 +104,9 @@ def get_chunk_token_ranges(
     chunk_token_ranges = []
 
     for chunk_start, chunk_end in chunk_ranges:
-        chunk_start_token = tokenizer.encode(text[:chunk_start], add_special_tokens=False)
+        chunk_start_token = tokenizer.encode(
+            text[:chunk_start], add_special_tokens=False
+        )
         chunk_start_token_idx = len(chunk_start_token)
         chunk_end_token = tokenizer.encode(text[:chunk_end], add_special_tokens=False)
         chunk_end_token_idx = len(chunk_end_token)
@@ -392,7 +398,9 @@ def sanity_check_sentences(sentences_w_spacing, dir_problem, text):
         assert sentence in text
 
 
-def split_solution_into_chunks(solution_text: str, drop_think: bool = True) -> List[str]:
+def split_solution_into_chunks(
+    solution_text: str, drop_think: bool = True
+) -> List[str]:
     """
     Split a solution into chunks for rollout generation.
 
@@ -449,10 +457,9 @@ def split_solution_into_chunks(solution_text: str, drop_think: bool = True) -> L
 
         i += 1
 
-    # # Add the last chunk if not empty
-    # if current_chunk.strip():
-    #     chunks.append(current_chunk.strip())
-    #     chunk_idxs.append(len(solution_text) - 1)  # Add last index
+    # Add the last chunk if not empty
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
 
     # Merge small chunks (less than 10 characters)
     i = 0
@@ -538,7 +545,9 @@ def load_math_problems(
         # Filter by level if specified
         if level is not None:
             indexed_problems = [
-                (i, problem) for i, problem in indexed_problems if problem.get("level") == level
+                (i, problem)
+                for i, problem in indexed_problems
+                if problem.get("level") == level
             ]
 
         # Sample if needed

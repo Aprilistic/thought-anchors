@@ -460,10 +460,9 @@ def split_solution_into_chunks(solution_text: str) -> List[str]:
 
         i += 1
 
-    # # Add the last chunk if not empty
-    # if current_chunk.strip():
-    #     chunks.append(current_chunk.strip())
-    #     chunk_idxs.append(len(solution_text) - 1)  # Add last index
+    # Add the last chunk if not empty
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
 
     # Merge small chunks (less than 10 characters)
     i = 0
