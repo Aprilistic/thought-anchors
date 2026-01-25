@@ -434,7 +434,7 @@ def generate_chunk_summary(chunk_text: str) -> str:
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=20,
+            max_completion_tokens=20,
         )
 
         summary = response.choices[0].message.content.strip()
@@ -483,7 +483,7 @@ Nickname (2-4 words max):
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=20,
+            max_completion_tokens=20,
         )
 
         nickname = response.choices[0].message.content.strip()

@@ -482,7 +482,7 @@ def llm_attribution(
             model=ENDPOINTS.openai_judge_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=4096,
+            max_completion_tokens=4096,
         )
 
         # Extract response
