@@ -7,7 +7,7 @@ import asyncio
 import httpx
 from tqdm import tqdm
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from dotenv import load_dotenv
 from utils import (
     extract_answers,
@@ -437,12 +437,22 @@ def generate_with_local_model_batch(
 
 
 async def make_api_request(
-    prompt: str, temperature: float, top_p: float, max_tokens: int
+    prompt: str,
+    temperature: float,
+    top_p: float,
+    max_tokens: int,
+    *,
+    messages: Optional[List[Dict[str, Any]]] = None,
+    stop: Optional[List[str]] = None,
 ) -> Dict:
     """Make an API request to either Novita, Together, Fireworks, or use a local model based on provider setting."""
     # If using local model, use synchronous generation
     if args.provider == "Local":
         return generate_with_local_model(prompt, temperature, top_p, max_tokens)
+
+    payload: Optional[Dict[str, Any]] = None
+    api_url: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
 
     if args.provider == "vLLM":
         vllm_api_key = os.getenv("VLLM_API_KEY", ENDPOINTS.vllm_api_key)
@@ -450,9 +460,10 @@ async def make_api_request(
         if vllm_api_key:
             headers["Authorization"] = f"Bearer {vllm_api_key}"
 
+        # Use OpenAI-compatible /v1/completions with a manually constructed chat-template prompt.
         payload = {
             "model": args.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "prompt": prompt,
             "temperature": temperature,
             "top_p": top_p,
             "top_k": args.top_k,
@@ -461,7 +472,10 @@ async def make_api_request(
             "stream": False,
         }
 
-        api_url = ENDPOINTS.generation_chat_completions_url()
+        if stop is not None:
+            payload["stop"] = stop
+
+        api_url = ENDPOINTS.generation_completions_url()
 
     # Otherwise, use API-based generation
     elif args.provider == "Novita":
@@ -520,6 +534,9 @@ async def make_api_request(
         }
 
         api_url = "https://api.fireworks.ai/inference/v1/completions"
+
+    if payload is None or api_url is None or headers is None:
+        raise ValueError(f"Unknown provider: {args.provider}")
 
     # Add optional parameters for all APIs
     if args.frequency_penalty is not None:
@@ -592,24 +609,9 @@ async def make_api_request(
                 result = response.json()
 
                 if args.provider == "vLLM":
-                    choice0 = result.get("choices", [{}])[0]
-                    msg = choice0.get("message") or {}
-                    content_text = (msg.get("content") or "").lstrip("\n")
-                    reasoning_text = (
-                        msg.get("reasoning") or msg.get("reasoning_content") or ""
-                    )
-
-                    merged = (
-                        f"<think>\n{reasoning_text}\n</think>\n{content_text}"
-                        if reasoning_text
-                        else content_text
-                    )
-
                     return {
-                        "text": merged,
-                        "reasoning": reasoning_text,
-                        "content": content_text,
-                        "finish_reason": choice0.get("finish_reason", ""),
+                        "text": result["choices"][0]["text"],
+                        "finish_reason": result["choices"][0].get("finish_reason", ""),
                         "usage": result.get("usage", {}),
                     }
 
@@ -731,9 +733,25 @@ def build_reasoning_prompt(
     reasoning_prefix: str = "",
     force_final_answer: bool = False,
 ) -> str:
-    # User requested: pass the dataset instruction only (no extra wrapper/system prompt).
-    # NOTE: reasoning_prefix/force_final_answer are intentionally ignored.
-    return instruction_text
+    prompt = instruction_text
+    if reasoning_prefix:
+        prompt = f"{prompt}\n\n{reasoning_prefix}"
+    if force_final_answer:
+        prompt = f"{prompt}\n\nFinal Answer: "
+    return prompt
+
+
+def build_vllm_completion_prompt(
+    *, instruction_text: str, assistant_prefix: str = ""
+) -> str:
+    """Build a raw prompt for vLLM /v1/completions using a manual chat template.
+
+    This matches the style shown in the user's curl example for Qwen/Qwen3.
+    """
+
+    user_block = f"<|im_start|>user\n{instruction_text}<|im_end|>\n"
+    assistant_open = "<|im_start|>assistant\n<think>\n"
+    return f"{user_block}{assistant_open}{assistant_prefix}"
 
 
 async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dict:
@@ -755,8 +773,17 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
 
     for attempt in range(max_retries):
         try:
+            if args.provider == "vLLM":
+                prompt = build_vllm_completion_prompt(
+                    instruction_text=instruction_text, assistant_prefix=""
+                )
+
             response = await make_api_request(
-                prompt, temperature, args.top_p, args.max_tokens
+                prompt,
+                temperature,
+                args.top_p,
+                args.max_tokens,
+                stop=["<|im_end|>"] if args.provider == "vLLM" else None,
             )
             if isinstance(response, dict) and response.get("error"):
                 raise RuntimeError(str(response.get("error")))
@@ -810,10 +837,14 @@ async def generate_rollout(
     Returns:
         Dictionary with the rollout result
     """
-    # User requested: prompt with instruction only.
     prefix_without_chunk = full_cot_prefix.replace(chunk_text, "").strip()
     instruction_text = get_instruction_text(problem)
     prompt = instruction_text
+
+    if args.provider == "vLLM":
+        prompt = build_vllm_completion_prompt(
+            instruction_text=instruction_text, assistant_prefix=prefix_without_chunk
+        )
 
     max_retries = args.max_retries
     retry_delay = 2 if max_retries > 0 else None
@@ -821,7 +852,11 @@ async def generate_rollout(
     for attempt in range(max_retries):
         try:
             response = await make_api_request(
-                prompt, temperature, args.top_p, args.max_tokens
+                prompt,
+                temperature,
+                args.top_p,
+                args.max_tokens,
+                stop=["<|im_end|>"] if args.provider == "vLLM" else None,
             )
             if isinstance(response, dict) and response.get("error"):
                 raise RuntimeError(str(response.get("error")))
@@ -891,7 +926,13 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
             # Backward-compat: ensure expected derived fields exist
             needs_save = False
             if "prompt" not in base_solution:
-                base_solution["prompt"] = get_instruction_text(problem)
+                if args.provider == "vLLM":
+                    base_solution["prompt"] = build_vllm_completion_prompt(
+                        instruction_text=get_instruction_text(problem),
+                        assistant_prefix="",
+                    )
+                else:
+                    base_solution["prompt"] = get_instruction_text(problem)
                 needs_save = True
 
             if "full_cot" not in base_solution:
