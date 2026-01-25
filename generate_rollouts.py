@@ -599,18 +599,16 @@ async def make_api_request(
                         msg.get("reasoning") or msg.get("reasoning_content") or ""
                     )
 
-                    # If the prompt already closed </think> (forced answer mode), don't inject reasoning.
-                    if "Final Answer:" in prompt:
-                        merged = content_text
-                    else:
-                        merged = (
-                            f"{reasoning_text}\n</think>\n{content_text}"
-                            if reasoning_text
-                            else content_text
-                        )
+                    merged = (
+                        f"<think>\n{reasoning_text}\n</think>\n{content_text}"
+                        if reasoning_text
+                        else content_text
+                    )
 
                     return {
                         "text": merged,
+                        "reasoning": reasoning_text,
+                        "content": content_text,
                         "finish_reason": choice0.get("finish_reason", ""),
                         "usage": result.get("usage", {}),
                     }
@@ -733,17 +731,9 @@ def build_reasoning_prompt(
     reasoning_prefix: str = "",
     force_final_answer: bool = False,
 ) -> str:
-    prompt = (
-        "Follow the user instruction carefully. "
-        "Provide your reasoning in <think>...</think>, then give a concise final answer.\n\n"
-        f"Instruction: {instruction_text}\n\n"
-        "Assistant:\n<think>\n"
-    )
-    if reasoning_prefix:
-        prompt += reasoning_prefix
-    if force_final_answer:
-        prompt += "\n</think>\n\nFinal Answer: "
-    return prompt
+    # User requested: pass the dataset instruction only (no extra wrapper/system prompt).
+    # NOTE: reasoning_prefix/force_final_answer are intentionally ignored.
+    return instruction_text
 
 
 async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dict:
@@ -758,7 +748,7 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
         Dictionary with the generated solution
     """
     instruction_text = get_instruction_text(problem)
-    prompt = build_reasoning_prompt(instruction_text=instruction_text)
+    prompt = instruction_text
 
     max_retries = 3
     retry_delay = 2
@@ -820,15 +810,10 @@ async def generate_rollout(
     Returns:
         Dictionary with the rollout result
     """
-    # Remove the current chunk from the prefix to see how it gets regenerated
+    # User requested: prompt with instruction only.
     prefix_without_chunk = full_cot_prefix.replace(chunk_text, "").strip()
-
     instruction_text = get_instruction_text(problem)
-    prompt = build_reasoning_prompt(
-        instruction_text=instruction_text,
-        reasoning_prefix=prefix_without_chunk,
-        force_final_answer=(rollout_type == "forced_answer"),
-    )
+    prompt = instruction_text
 
     max_retries = args.max_retries
     retry_delay = 2 if max_retries > 0 else None
@@ -906,9 +891,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
             # Backward-compat: ensure expected derived fields exist
             needs_save = False
             if "prompt" not in base_solution:
-                base_solution["prompt"] = build_reasoning_prompt(
-                    instruction_text=get_instruction_text(problem)
-                )
+                base_solution["prompt"] = get_instruction_text(problem)
                 needs_save = True
 
             if "full_cot" not in base_solution:
@@ -1029,6 +1012,21 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
         with open(chunks_file, "r", encoding="utf-8") as f:
             chunks = json.load(f)["chunks"]
         print(f"Problem {problem_idx}: Loaded {len(chunks)} existing chunks")
+
+        # Backward-compat: older runs may have written empty chunks.
+        if not chunks:
+            chunks = split_solution_into_chunks(solution_text)
+            with open(chunks_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "source_text": source_text,
+                        "solution_text": solution_text,
+                        "chunks": chunks,
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"Problem {problem_idx}: Regenerated chunks ({len(chunks)})")
 
     if len(chunks) > args.max_chunks:
         print(f"Problem {problem_idx}: Too many chunks. Will not generate rollouts.")

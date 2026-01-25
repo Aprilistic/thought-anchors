@@ -1385,6 +1385,19 @@ def analyze_problem(
         )
         chunks = valid_chunks
 
+    # Nothing to analyze/label if all chunks were filtered out.
+    if not chunks or not valid_chunk_indices:
+        print(f"Problem {problem_dir.name}: No valid chunks found; skipping")
+        labeled_chunks_file = problem_dir / "chunks_labeled.json"
+        if not labeled_chunks_file.exists() or force_relabel:
+            with open(labeled_chunks_file, "w", encoding="utf-8") as f:
+                json.dump([], f, indent=2)
+        return {
+            "problem_dir": str(problem_dir),
+            "nickname": problem.get("nickname", ""),
+            "num_chunks": 0,
+        }
+
     # Check if at least 25% of chunks have corresponding chunk folders
     chunk_folders = [problem_dir / f"chunk_{i}" for i in valid_chunk_indices]
     existing_chunk_folders = [folder for folder in chunk_folders if folder.exists()]
