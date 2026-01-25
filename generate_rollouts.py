@@ -452,7 +452,7 @@ async def make_api_request(
 
         payload = {
             "model": args.model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "top_p": top_p,
             "top_k": args.top_k,
@@ -461,7 +461,7 @@ async def make_api_request(
             "stream": False,
         }
 
-        api_url = ENDPOINTS.generation_completions_url()
+        api_url = ENDPOINTS.generation_chat_completions_url()
 
     # Otherwise, use API-based generation
     elif args.provider == "Novita":
@@ -591,7 +591,31 @@ async def make_api_request(
                 # Success case
                 result = response.json()
 
-                if args.provider == "Novita" or args.provider == "Together":
+                if args.provider == "vLLM":
+                    choice0 = result.get("choices", [{}])[0]
+                    msg = choice0.get("message") or {}
+                    content_text = (msg.get("content") or "").lstrip("\n")
+                    reasoning_text = (
+                        msg.get("reasoning") or msg.get("reasoning_content") or ""
+                    )
+
+                    # If the prompt already closed </think> (forced answer mode), don't inject reasoning.
+                    if "Final Answer:" in prompt:
+                        merged = content_text
+                    else:
+                        merged = (
+                            f"{reasoning_text}\n</think>\n{content_text}"
+                            if reasoning_text
+                            else content_text
+                        )
+
+                    return {
+                        "text": merged,
+                        "finish_reason": choice0.get("finish_reason", ""),
+                        "usage": result.get("usage", {}),
+                    }
+
+                if args.provider in ("Novita", "Together"):
                     return {
                         "text": result["choices"][0]["text"],
                         "finish_reason": result["choices"][0].get("finish_reason", ""),
@@ -744,6 +768,8 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
             response = await make_api_request(
                 prompt, temperature, args.top_p, args.max_tokens
             )
+            if isinstance(response, dict) and response.get("error"):
+                raise RuntimeError(str(response.get("error")))
             solution_text = response["text"]
 
             # Extract answer and check correctness
@@ -812,6 +838,8 @@ async def generate_rollout(
             response = await make_api_request(
                 prompt, temperature, args.top_p, args.max_tokens
             )
+            if isinstance(response, dict) and response.get("error"):
+                raise RuntimeError(str(response.get("error")))
             rollout_text = response["text"]
             chunk_resampled = split_solution_into_chunks(rollout_text)[0]
 
@@ -966,11 +994,17 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
 
     # Extract the solution part for chunking
     if "<think>" in source_text:
-        solution_text = source_text.split("<think>")[1].strip()
-        if "</think>" in solution_text:
-            solution_text = solution_text.split("</think>")[0].strip()
+        after_think = source_text.split("<think>", 1)[1]
+        # Prefer reasoning between <think>...</think>, but if it's empty, fall back to post-</think>.
+        if "</think>" in after_think:
+            pre_close, post_close = after_think.split("</think>", 1)
+            solution_text = pre_close.strip()
+            if not solution_text:
+                solution_text = post_close.strip()
+        else:
+            solution_text = after_think.strip()
     else:
-        solution_text = source_text
+        solution_text = source_text.strip()
 
     # Save chunks to a separate file
     chunks_file = problem_dir / "chunks.json"
