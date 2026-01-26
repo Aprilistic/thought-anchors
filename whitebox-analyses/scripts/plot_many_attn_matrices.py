@@ -63,26 +63,64 @@ def get_problem_nums(model_name="qwen-14b", num_problems=20):
 
 if __name__ == "__main__":
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Plot grid of attention matrices for multiple problems")
+
+    parser = argparse.ArgumentParser(
+        description="Plot grid of attention matrices for multiple problems"
+    )
     parser.add_argument("--model-name", type=str, default="qwen-15b", help="Model name")
-    parser.add_argument("--num-problems", type=int, default=20, help="Number of problems to plot")
-    parser.add_argument("--top-k", type=int, default=100, help="Number of top receiver heads to identify")
-    parser.add_argument("--proximity-ignore", type=int, default=4, help="Proximity ignore for receiver heads")
-    parser.add_argument("--control-depth", action="store_true", help="Control for depth")
+    parser.add_argument(
+        "--num-problems", type=int, default=20, help="Number of problems to plot"
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=100,
+        help="Number of top receiver heads to identify",
+    )
+    parser.add_argument(
+        "--proximity-ignore",
+        type=int,
+        default=4,
+        help="Proximity ignore for receiver heads",
+    )
+    parser.add_argument(
+        "--control-depth", action="store_true", help="Control for depth"
+    )
     parser.add_argument("--n-rows", type=int, default=5, help="Number of rows in grid")
-    parser.add_argument("--n-cols", type=int, default=4, help="Number of columns in grid")
-    parser.add_argument("--figsize", type=float, nargs=2, default=[7, 8.5], help="Figure size (width height)")
-    parser.add_argument("--output-dir", type=str, default="plots/attn_matrices", help="Output directory")
+    parser.add_argument(
+        "--n-cols", type=int, default=4, help="Number of columns in grid"
+    )
+    parser.add_argument(
+        "--figsize",
+        type=float,
+        nargs=2,
+        default=[7, 8.5],
+        help="Figure size (width height)",
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default="plots/attn_matrices", help="Output directory"
+    )
     parser.add_argument("--dpi", type=int, default=300, help="DPI for saved figure")
-    parser.add_argument("--use-first-head", action="store_true", help="Use first receiver head from top-k")
-    parser.add_argument("--layer", type=int, default=36, help="Default layer if no receiver heads found")
-    parser.add_argument("--head", type=int, default=6, help="Default head if no receiver heads found")
-    parser.add_argument("--quantile-min", type=float, default=0.05, help="Min quantile for color scale")
-    parser.add_argument("--quantile-max", type=float, default=0.95, help="Max quantile for color scale")
-    
+    parser.add_argument(
+        "--use-first-head",
+        action="store_true",
+        help="Use first receiver head from top-k",
+    )
+    parser.add_argument(
+        "--layer", type=int, default=36, help="Default layer if no receiver heads found"
+    )
+    parser.add_argument(
+        "--head", type=int, default=6, help="Default head if no receiver heads found"
+    )
+    parser.add_argument(
+        "--quantile-min", type=float, default=0.05, help="Min quantile for color scale"
+    )
+    parser.add_argument(
+        "--quantile-max", type=float, default=0.95, help="Max quantile for color scale"
+    )
+
     args = parser.parse_args()
-    
+
     # Get problem numbers
     problem_nums = get_problem_nums(args.model_name, num_problems=args.num_problems)
 
@@ -97,14 +135,25 @@ if __name__ == "__main__":
     n_row = args.n_rows
     n_col = args.n_cols
 
+    # Clamp fallback layer/head to this model's valid range
+    n_layers, n_heads = model2layers_heads(args.model_name)
+    fallback_layer = min(args.layer, n_layers - 1)
+    fallback_head = min(args.head, n_heads - 1)
+
     # Use the first receiver head from the top k
     if len(coords) > 0:
         target_layer, target_head = coords[0]
     else:
-        target_layer, target_head = args.layer, args.head  # Default fallback
+        target_layer, target_head = fallback_layer, fallback_head  # Default fallback
 
     # Create grid of targets
-    idxs = np.arange(min(20, len(problem_nums)))
+    n = min(args.num_problems, len(problem_nums))
+    grid_size = n_row * n_col
+    if grid_size < n:
+        n_row = int(np.ceil(n / n_col))
+        grid_size = n_row * n_col
+
+    idxs = np.arange(grid_size)
     idxs = np.reshape(idxs, (n_row, n_col))
     targets = [[None] * n_col for _ in range(n_row)]
 
@@ -133,7 +182,9 @@ if __name__ == "__main__":
             problem_num = int(pn_str[:-1])
 
             # Get text and sentences
-            text, sentences = get_problem_text_sentences(problem_num, is_correct, model_name=args.model_name)
+            text, sentences = get_problem_text_sentences(
+                problem_num, is_correct, model_name=args.model_name
+            )
 
             # Get averaged attention matrix
             avg_matrix = get_avg_attention_matrix(
@@ -158,7 +209,9 @@ if __name__ == "__main__":
             white_blue_cmap = white_to_blues()
 
             # Plot the matrix
-            axs[row_idx, col_idx].imshow(avg_matrix, vmin=0, vmax=vmax, cmap=white_blue_cmap)
+            axs[row_idx, col_idx].imshow(
+                avg_matrix, vmin=0, vmax=vmax, cmap=white_blue_cmap
+            )
 
             # Set title
             if pn_all_same:
@@ -200,10 +253,14 @@ if __name__ == "__main__":
             if row_idx == len(targets) - 1:
                 axs[row_idx, col_idx].set_xlabel("Sentence position", fontsize=10)
             if col_idx == 0:
-                axs[row_idx, col_idx].set_ylabel("Sentence position", fontsize=10, labelpad=5)
+                axs[row_idx, col_idx].set_ylabel(
+                    "Sentence position", fontsize=10, labelpad=5
+                )
 
     if head_all_same:
-        plt.suptitle(f"All responses for layer: {target_layer}, head: {target_head}", fontsize=13)
+        plt.suptitle(
+            f"All responses for layer: {target_layer}, head: {target_head}", fontsize=13
+        )
     elif pn_all_same:
         plt.suptitle(f"Attention weights for problem examples", fontsize=13)
 
@@ -216,7 +273,8 @@ if __name__ == "__main__":
 
     if head_all_same:
         plt.savefig(
-            output_dir / f"receiver_head_{target_layer}_{target_head}_pn_examples.png", dpi=args.dpi
+            output_dir / f"receiver_head_{target_layer}_{target_head}_pn_examples.png",
+            dpi=args.dpi,
         )
     elif pn_all_same:
         plt.savefig(output_dir / f"receiver_pn_examples.png", dpi=args.dpi)
