@@ -792,8 +792,7 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
             # Extract answer and check correctness
             extracted_answers = extract_answers(solution_text)
             answer = extracted_answers[0] if extracted_answers else ""
-            is_correct = False
-
+            is_correct = None
             if problem.get("gt_answer") and answer:
                 is_correct = check_answer(answer, problem["gt_answer"])
 
@@ -870,8 +869,7 @@ async def generate_rollout(
                 else rollout_text
             )
             answer = extracted_answers[0] if extracted_answers else ""
-            is_correct = False
-
+            is_correct = None
             if problem.get("gt_answer") and answer:
                 is_correct = check_answer(answer, problem["gt_answer"])
 
@@ -955,8 +953,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
             if not args.skip_recalculate and "solution" in base_solution:
                 extracted_answers = extract_answers(base_solution["solution"])
                 answer = extracted_answers[0] if extracted_answers else ""
-                is_correct = False
-
+                is_correct = None
                 if problem.get("gt_answer") and answer:
                     is_correct = check_answer(answer, problem["gt_answer"])
 
@@ -1111,8 +1108,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
                                 else rollout["rollout"]
                             )
                             answer = extracted_answers[0] if extracted_answers else ""
-                            is_correct = False
-
+                            is_correct = None
                             if problem.get("gt_answer") and answer:
                                 is_correct = check_answer(answer, problem["gt_answer"])
 
@@ -1197,8 +1193,7 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
                         else rollout_text
                     )
                     answer = extracted_answers[0] if extracted_answers else ""
-                    is_correct = False
-
+                    is_correct = None
                     if problem.get("gt_answer") and answer:
                         is_correct = check_answer(answer, problem["gt_answer"])
 

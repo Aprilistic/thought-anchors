@@ -1389,6 +1389,9 @@ def analyze_problem(
     with open(base_solution_file, "r", encoding="utf-8") as f:
         base_solution = json.load(f)
 
+    # Fortress-style datasets often have no ground-truth answers; treat correctness metrics as unavailable.
+    has_gt = bool(problem.get("gt_answer") or base_solution.get("gt_answer"))
+
     # Load chunks
     with open(chunks_file, "r", encoding="utf-8") as f:
         chunks_data = json.load(f)
@@ -1457,23 +1460,27 @@ def analyze_problem(
                             with open(solutions_file, "r", encoding="utf-8") as f:
                                 solutions = json.load(f)
 
-                            # Calculate accuracy from solutions
-                            correct_count = sum(
-                                1
-                                for sol in solutions
-                                if sol.get("is_correct", False) is True
-                                and sol.get("answer", "") != ""
-                            )
-                            total_count = sum(
-                                1
-                                for sol in solutions
-                                if sol.get("is_correct", None) is not None
-                                and sol.get("answer", "") != ""
-                            )
-                            accuracy = (
-                                correct_count / total_count if total_count > 0 else 0.0
-                            )
-                            forced_answer_accuracies[chunk_idx] = accuracy
+                            if has_gt:
+                                correct_count = sum(
+                                    1
+                                    for sol in solutions
+                                    if sol.get("is_correct", False) is True
+                                    and sol.get("answer", "") != ""
+                                )
+                                total_count = sum(
+                                    1
+                                    for sol in solutions
+                                    if sol.get("is_correct", None) is not None
+                                    and sol.get("answer", "") != ""
+                                )
+                                accuracy = (
+                                    correct_count / total_count
+                                    if total_count > 0
+                                    else 0.0
+                                )
+                                forced_answer_accuracies[chunk_idx] = accuracy
+                            else:
+                                forced_answer_accuracies[chunk_idx] = float("nan")
 
                         except Exception as e:
                             print(f"Error loading solutions from {solutions_file}: {e}")
@@ -1491,19 +1498,22 @@ def analyze_problem(
             with open(solutions_file, "r", encoding="utf-8") as f:
                 solutions = json.load(f)
 
-            # Calculate accuracy
-            correct = sum(
-                1
-                for sol in solutions
-                if sol.get("is_correct", False) is True and sol.get("answer", "") != ""
-            )
-            total = sum(
-                1
-                for sol in solutions
-                if sol.get("is_correct", None) is not None
-                and sol.get("answer", "") != ""
-            )
-            chunk_accuracies[chunk_idx] = correct / total if total > 0 else 0.0
+            if has_gt:
+                correct = sum(
+                    1
+                    for sol in solutions
+                    if sol.get("is_correct", False) is True
+                    and sol.get("answer", "") != ""
+                )
+                total = sum(
+                    1
+                    for sol in solutions
+                    if sol.get("is_correct", None) is not None
+                    and sol.get("answer", "") != ""
+                )
+                chunk_accuracies[chunk_idx] = correct / total if total > 0 else 0.0
+            else:
+                chunk_accuracies[chunk_idx] = float("nan")
 
             # Calculate average token count
             if solutions:
@@ -1513,26 +1523,35 @@ def analyze_problem(
                 token_counts.append((chunk_idx, avg_tokens))
 
             if solutions:
-                # Store answer distributions
+                # Store answer distributions (fallback to rollout text if no explicit answer)
                 chunk_answers[chunk_idx] = defaultdict(int)
                 for sol in solutions:
-                    if sol.get("answer", "") != "" and sol.get("answer", "") != "None":
+                    raw_answer = sol.get("answer", "")
+                    if not raw_answer:
+                        raw_answer = sol.get("rollout", "") or sol.get("full_cot", "")
+                    if isinstance(raw_answer, str) and raw_answer.strip():
                         chunk_answers[chunk_idx][
-                            normalize_answer(sol.get("answer", ""))
+                            normalize_answer(raw_answer)[:256]
                         ] += 1
 
-                # Store resampled chunks and answers for absolute metrics
+                # Store resampled chunks and answers for metrics (include even without gt answers)
                 chunk_info[chunk_idx] = []
                 for sol in solutions:
-                    if sol.get("answer", "") != "" and sol.get("answer", "") != "None":
-                        info = {
+                    raw_answer = sol.get("answer", "")
+                    if not raw_answer:
+                        raw_answer = sol.get("rollout", "") or sol.get("full_cot", "")
+
+                    chunk_info[chunk_idx].append(
+                        {
                             "chunk_removed": sol.get("chunk_removed", ""),
                             "chunk_resampled": sol.get("chunk_resampled", ""),
                             "full_cot": sol.get("full_cot", ""),
                             "is_correct": sol.get("is_correct", False),
-                            "answer": normalize_answer(sol.get("answer", "")),
+                            "answer": normalize_answer(raw_answer)[:256]
+                            if isinstance(raw_answer, str)
+                            else "",
                         }
-                        chunk_info[chunk_idx].append(info)
+                    )
 
     # Initialize embedding model (local SentenceTransformer) and cache at the problem level
     global embedding_model_cache
@@ -4215,8 +4234,12 @@ def analyze_high_zscore_steps_by_category(
                 category_zscores[formatted_tag].append(score_to_store)
 
     print(
-        f"Found {total_high_zscore_steps} steps with z-score > {z_threshold} out of {total_steps_analyzed} total steps ({total_high_zscore_steps / total_steps_analyzed:.1%})"
+        f"Found {total_high_zscore_steps} steps with z-score > {z_threshold} out of {total_steps_analyzed} total steps"
     )
+
+    if total_steps_analyzed == 0:
+        print(f"No steps available for z-score analysis (total_steps_analyzed=0)")
+        return
 
     # Skip if no categories found
     if not category_zscores:
