@@ -1915,6 +1915,7 @@ def analyze_problem(
         "problem_type": problem.get("type"),
         "problem_level": problem.get("level"),
         "base_accuracy": base_solution.get("is_correct", False),
+        "has_gt": has_gt,
         "num_chunks": len(chunks),
         "labeled_chunks": labeled_chunks,
         "token_counts": token_counts,
@@ -1941,6 +1942,16 @@ def generate_plots(
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(exist_ok=True, parents=True)
 
+    y_label = "Importance (%)"
+    if "accuracy" in importance_metric:
+        y_label = "Importance (Accuracy Difference %)"
+    elif "kl" in importance_metric:
+        y_label = "Importance (KL Divergence)"
+    elif importance_metric == "different_trajectories_fraction":
+        y_label = "Fraction of Semantic Changes (%)"
+    elif importance_metric == "overdeterminedness":
+        y_label = "Overdeterminedness (%)"
+
     # Prepare data for plots
     all_chunks = []
     all_chunks_with_forced = []  # New list for chunks with forced importance
@@ -1950,8 +1961,8 @@ def generate_plots(
             continue
 
         problem_idx = result["problem_idx"]
-        problem_type = result.get("problem_type", "Unknown")
-        problem_level = result.get("problem_level", "Unknown")
+        problem_type = result.get("problem_type") or "Unknown"
+        problem_level = result.get("problem_level") or "Unknown"
 
         for chunk in result.get("labeled_chunks", []):
             # Format function tags for better display
@@ -1990,6 +2001,10 @@ def generate_plots(
                     "forced_importance_accuracy", 0.0
                 ),
                 "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
+                "different_trajectories_fraction": chunk.get(
+                    "different_trajectories_fraction", 0.0
+                ),
+                "overdeterminedness": chunk.get("overdeterminedness", 0.0),
                 "chunk_length": len(chunk.get("chunk", "")),
             }
             all_chunks.append(chunk_data)
@@ -2222,7 +2237,7 @@ def generate_plots(
     ax.legend(handles=legend_elements, loc="upper right")
 
     plt.title("Chunk Importance by Category")
-    plt.ylabel("Importance (Accuracy Difference %)")
+    plt.ylabel(y_label)
     plt.xlabel(None)
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
@@ -2237,7 +2252,7 @@ def generate_plots(
     sns.barplot(x="problem_level", y=importance_metric, data=level_importance)
     plt.title("Average Chunk Importance by Problem Level")
     plt.xlabel(None)
-    plt.ylabel("Average Importance (Accuracy Difference %)")
+    plt.ylabel(y_label)
     plt.tight_layout()
     plt.savefig(plots_dir / "importance_by_level.png")
     plt.close()
@@ -2251,7 +2266,7 @@ def generate_plots(
     sns.barplot(x="problem_type", y=importance_metric, data=type_importance)
     plt.title("Average Chunk Importance by Problem Type")
     plt.xlabel(None)
-    plt.ylabel("Average Importance (Accuracy Difference %)")
+    plt.ylabel(y_label)
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     plt.savefig(plots_dir / "importance_by_type.png")
@@ -3492,6 +3507,14 @@ def process_rollouts(
             results.append(result)
 
     # Generate plots
+    has_any_gt = any(bool(r.get("has_gt")) for r in results)
+    if not has_any_gt and importance_metric.endswith("_accuracy"):
+        print(
+            "No ground-truth answers detected; switching importance metric from "
+            f"{importance_metric} to different_trajectories_fraction"
+        )
+        importance_metric = "different_trajectories_fraction"
+
     category_importance = generate_plots(results, output_dir, importance_metric)
 
     # Plot chunk accuracy by position
