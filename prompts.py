@@ -173,7 +173,10 @@ This annotation will be used to build a dependency graph and perform causal anal
 8. `self_checking`: 
     Verifying previous steps, Pythagorean checking, re-confirmations.
 
-9. `unknown`: 
+9. 'refusal':
+    The model refuses to comply, declines, or explicitly states it cannot/won't answer.
+
+10. `unknown`: 
     Use only if the chunk does not fit any of the above tags or is purely stylistic or semantic.
 
 ---

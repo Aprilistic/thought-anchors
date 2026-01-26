@@ -10,6 +10,7 @@ def get_type2color():
     type2color = {
         "plan_generation": "tab:red",
         "verbalized_evaluation_awareness": "tab:green",
+        "refusal": "tab:red",
         "fact_retrieval": "tab:orange",
         "uncertainty_management": "tab:purple",
         "result_consolidation": "tab:blue",
@@ -22,6 +23,7 @@ def get_type2label():
     type2label = {
         "plan_generation": "Plan\nGeneration",
         "verbalized_evaluation_awareness": "Verbalized\nEval\nAwareness",
+        "refusal": "Refusal",
         "fact_retrieval": "Fact\nRetrieval",
         "uncertainty_management": "Uncertainty\nMgmt.",
         "result_consolidation": "Result\nConsolidation",

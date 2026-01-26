@@ -265,6 +265,7 @@ function tagToColor(tag) {
     problem_setup: "#64748b",       // slate-500
     final_answer_emission: "#f59e0b", // amber-500
     verbalized_evaluation_awareness: "#f97316", // orange-500
+    refusal: "#e11d48", // rose-600
     unknown: "#9ca3af",
   };
   return map[t] || "#9ca3af";

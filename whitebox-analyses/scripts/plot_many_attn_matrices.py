@@ -162,7 +162,7 @@ if __name__ == "__main__":
         "--highlight-tag",
         type=str,
         default="verbalized_evaluation_awareness",
-        help="Highlight sentences/chunks with this function tag",
+        help="Highlight sentences/chunks with this function tag (e.g. verbalized_evaluation_awareness, refusal)",
     )
     parser.add_argument(
         "--highlight-color",

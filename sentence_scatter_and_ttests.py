@@ -67,6 +67,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
     )
     categories = {
         "Verbalized Evaluation Awareness",
+        "Refusal",
         "Fact Retrieval",
         "Plan Generation",
         "Uncertainty Management",
@@ -99,6 +100,7 @@ def plot_scatter(df, key="counterfactual_importance_kl", output_dir="plots/pb"):
     CATEGORY_COLORS = {
         "Active Computation": "#34A853",
         "Verbalized Evaluation Awareness": "#34A853",
+        "Refusal": "#E11D48",
         "Fact Retrieval": "#FBBC05",
         "Final Answer Emission": "#795548",
         "Plan Generation": "#EA4335",

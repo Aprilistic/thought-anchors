@@ -24,6 +24,7 @@ import matplotlib.colors as mcolors
 CATEGORY_COLORS = {
     "Active Computation": "#34A853",
     "Verbalized Evaluation Awareness": "#34A853",
+    "Refusal": "#E11D48",
     "Fact Retrieval": "#FBBC05",
     "Final Answer Emission": "#795548",
     "Plan Generation": "#EA4335",
@@ -572,6 +573,7 @@ def get_category_from_abbreviation(abbreviation):
     abbrev_to_category = {
         "AC": "Verbalized Evaluation Awareness",  # backward compat
         "VEA": "Verbalized Evaluation Awareness",
+        "RF": "Refusal",
         "FR": "Fact Retrieval",
         "FAE": "Final Answer Emission",
         "PG": "Plan Generation",

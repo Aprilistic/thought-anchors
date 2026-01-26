@@ -15,3 +15,4 @@ math-rollouts_test/
 
 .venv/
 .python-version
+.DS_Store

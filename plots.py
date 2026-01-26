@@ -69,6 +69,7 @@ IMPORTANCE_METRICS = [
 CATEGORY_COLORS = {
     "Active Computation": "#34A853",
     "Verbalized Evaluation Awareness": "#34A853",
+    "Refusal": "#E11D48",
     "Fact Retrieval": "#FBBC05",
     "Final Answer Emission": "#795548",
     "Plan Generation": "#EA4335",
@@ -1785,6 +1786,7 @@ def plot_category_metrics_averages(df_tags, output_dir="analysis/importance_plot
     # Define the category order from confusion matrix script
     confusion_matrix_order = [
         "Verbalized Evaluation Awareness",
+        "Refusal",
         "Fact Retrieval",
         "Plan Generation",
         "Uncertainty Management",
@@ -2202,6 +2204,7 @@ def plot_kl_metric_comparison_by_category(
     categories = sorted(df["formatted_tag"].unique())
     categories = [
         "Verbalized Evaluation Awareness",
+        "Refusal",
         "Fact Retrieval",
         "Plan Generation",
         "Uncertainty Management",
