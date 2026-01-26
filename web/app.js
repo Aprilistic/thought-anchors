@@ -61,16 +61,12 @@ function chunkHasTag(chunk, tag) {
   return (chunk.function_tags || []).some((t) => String(t).toLowerCase() === target);
 }
 
-function computeBarWidth(chunk, metric) {
-  const v = metricValue(chunk, metric);
-  if (v === null) return 0;
-  if (v >= 0 && v <= 1) return Math.round(v * 100);
-  return Math.round(Math.max(0, Math.min(1, v / 10)) * 100);
-}
+// -- Rendering Logic --
 
 function renderProblemHeader() {
-  const instr = currentProblem?.instruction || "";
-  els.instruction.textContent = instr || "(No instruction found in exported data.)";
+  const instr = currentProblem?.title || currentProblem?.instruction || "";
+  els.instruction.textContent = instr || "(No instruction found)";
+  els.instruction.title = instr; // Tooltip for full text
 
   const cot = currentProblem?.full_cot || "";
   if (cot) {
@@ -84,28 +80,56 @@ function renderProblemHeader() {
 
 function renderSelectedChunk() {
   if (!currentProblem || selectedChunkIdx === null) {
-    els.selected.innerHTML = "<div class=\"muted\">No chunk selected.</div>";
+    els.selected.innerHTML = `
+        <div class="empty-state">
+            <div class="icon">👈</div>
+            <p>Select a node in the graph to view details.</p>
+        </div>`;
     return;
   }
   const chunk = currentProblem.chunks.find((c) => String(c.idx) === String(selectedChunkIdx));
   if (!chunk) {
-    els.selected.innerHTML = "<div class=\"muted\">No chunk selected.</div>";
+    els.selected.innerHTML = "<div class=\"empty-state\">Selection not found.</div>";
     return;
   }
+
   const metric = els.metricSelect.value;
   const v = metricValue(chunk, metric);
-  const tags = (chunk.function_tags || []).map(escapeHtml).join(" · ");
+  const tags = (chunk.function_tags || []).join(", ");
+
+  // Highlight the chunk text based on tags if needed, for now just show text
+  let summaryHtml = "";
+  if (chunk.summary) {
+    summaryHtml = `
+        <div class="section-title">Summary</div>
+        <div class="chunk-box">${escapeHtml(chunk.summary)}</div>
+      `;
+  }
 
   els.selected.innerHTML = `
-    <h3>Chunk ${escapeHtml(chunk.idx)}</h3>
-    <div class="meta">
-      <span><b>Metric:</b> ${escapeHtml(metric)}</span>
-      <span> · <b>Value:</b> ${v === null ? "n/a" : escapeHtml(v.toFixed ? v.toFixed(4) : v)}</span>
-      <span> · <b>Tags:</b> ${tags || "none"}</span>
+    <div class="chunk-card">
+        <div class="chunk-header">
+            <div class="chunk-id">CHUNK ${escapeHtml(chunk.idx)}</div>
+            <h2>${tags ? tags : "Reasoning Step"}</h2>
+        </div>
+        
+        <div class="chunk-metrics">
+            <div class="detail-metric">
+                <span class="detail-label">${escapeHtml(metric)}</span>
+                <span class="detail-value">${v === null ? "n/a" : (v.toFixed ? v.toFixed(4) : v)}</span>
+            </div>
+            <div class="detail-metric">
+                <span class="detail-label">Tags</span>
+                <span class="detail-value">${tags ? escapeHtml(tags) : '<span style="color:#d1d5db">None</span>'}</span>
+            </div>
+        </div>
+
+        <div class="chunk-body">
+             <div class="section-title">Content</div>
+             <div class="chunk-box" style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(chunk.chunk || "")}</div>
+             ${summaryHtml}
+        </div>
     </div>
-    ${chunk.summary ? `<div class="box"><b>Summary</b>\n\n${escapeHtml(chunk.summary)}</div>` : ""}
-    <div style="height: 10px"></div>
-    <div class="box"><b>Chunk</b>\n\n${escapeHtml(chunk.chunk || "")}</div>
   `;
 }
 
@@ -115,40 +139,38 @@ function renderChunks() {
 
   els.chunks.innerHTML = "";
   if (!currentProblem || !currentProblem.chunks || currentProblem.chunks.length === 0) {
-    els.chunks.innerHTML = "<div class=\"chunk\"><div class=\"muted\">No chunks available.</div></div>";
+    els.chunks.innerHTML = "<div style='padding:12px; color:#9ca3af'>No chunks.</div>";
     return;
   }
 
+  // Map chunks to bar items
+  const maxVal = 1.0; // Assume normalized 0-1 usually, or find max
+
   for (const chunk of currentProblem.chunks) {
-    const width = computeBarWidth(chunk, metric);
+    const v = metricValue(chunk, metric);
+    const val = v === null ? 0 : Math.max(0, Math.min(1, v)); // clamp 0-1
+
     const active = String(chunk.idx) === String(selectedChunkIdx);
-    const tags = chunk.function_tags || [];
     const hit = chunkHasTag(chunk, highlight);
 
-    const tagHtml = tags
-      .slice(0, 6)
-      .map((t) => `<span class="tag ${String(t).toLowerCase() === String(highlight).toLowerCase() ? "hit" : ""}">${escapeHtml(t)}</span>`)
-      .join("");
-
     const div = document.createElement("div");
-    div.className = `chunk${active ? " active" : ""}`;
+    div.className = `chunk-bar-item ${active ? "active" : ""} ${hit ? "hit" : ""}`;
+    div.title = `Chunk ${chunk.idx}: ${v !== null ? v.toFixed(3) : "n/a"}`;
+
+    const fillHeight = Math.max(5, val * 100); // at least 5% so visible
+
     div.innerHTML = `
-      <div class="chunk-row">
-        <div class="chunk-idx">#${escapeHtml(chunk.idx)}</div>
-        <div class="bar" title="${escapeHtml(metric)}">
-          <span style="width:${width}%;"></span>
-        </div>
-        <div class="chunk-idx" title="highlight">${hit ? "hit" : ""}</div>
-      </div>
-      <div class="tags">${tagHtml || "<span class=\"tag\">none</span>"}</div>
-    `;
+        <div class="fill" style="height: ${fillHeight}%; opacity: ${v === null ? 0.3 : 1}"></div>
+      `;
+
     div.addEventListener("click", () => {
       selectedChunkIdx = chunk.idx;
       renderChunks();
       renderSelectedChunk();
       renderPlot();
-      renderGraph();
+      renderGraph(); // update highlighting
     });
+
     els.chunks.appendChild(div);
   }
 }
@@ -171,14 +193,14 @@ function renderPlot() {
     xs.push(c.idx);
     ys.push(y === null ? NaN : y);
     hover.push(
-      `<b>Chunk ${escapeHtml(c.idx)}</b><br>` +
-        `<b>Tags:</b> ${escapeHtml((c.function_tags || []).join(", ") || "none")}<br>` +
-        `<b>Summary:</b> ${escapeHtml(c.summary || "")}<br>` +
-        `<span style="opacity:.7">${escapeHtml((c.chunk || "").slice(0, 240))}${(c.chunk || "").length > 240 ? "…" : ""}</span>`
+      `Chunk ${c.idx}<br>${metric}: ${y !== null ? y.toFixed(4) : "n/a"}`
     );
+
     const isSel = String(c.idx) === String(selectedChunkIdx);
     const isHit = chunkHasTag(c, highlight);
-    colors.push(isSel ? "#0c4a6e" : isHit ? "#c36a2d" : "rgba(25,26,24,0.35)");
+    // Use CSS var colors if possible, but Plotly needs hex
+    // Primary: #0f172a, Accent: #f97316, Selection: #0ea5e9
+    colors.push(isSel ? "#0ea5e9" : isHit ? "#f97316" : "#cbd5e1");
   }
 
   const trace = {
@@ -188,22 +210,37 @@ function renderPlot() {
     hoverinfo: "text",
     text: hover,
     marker: {
-      size: xs.map((x) => (String(x) === String(selectedChunkIdx) ? 10 : 7)),
+      size: xs.map((x) => (String(x) === String(selectedChunkIdx) ? 10 : 6)),
       color: colors,
-      line: { width: 1, color: "rgba(0,0,0,0.35)" },
+      line: { width: 1, color: "white" },
+      opacity: 1
     },
-    line: { width: 2, color: "rgba(12,74,110,0.35)" },
+    line: { width: 2, color: "#94a3b8", shape: 'spline' }, // Smooth line
   };
 
   const layout = {
-    margin: { l: 50, r: 20, t: 20, b: 40 },
+    margin: { l: 40, r: 20, t: 10, b: 30 },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(0,0,0,0)",
-    xaxis: { title: "chunk_idx", zeroline: false, gridcolor: "rgba(0,0,0,0.06)" },
-    yaxis: { title: metric, zeroline: false, gridcolor: "rgba(0,0,0,0.06)" },
+    xaxis: {
+      title: "", // Hide title for clean look
+      zeroline: false,
+      gridcolor: "#f1f5f9",
+      showticklabels: true
+    },
+    yaxis: {
+      title: "",
+      zeroline: false,
+      gridcolor: "#f1f5f9",
+      range: [0, 1.1] // slightly explicit range
+    },
+    autosize: true
   };
 
-  Plotly.react(els.plot, [trace], layout, { displayModeBar: false, responsive: true });
+  const config = { displayModeBar: false, responsive: true };
+
+  Plotly.react(els.plot, [trace], layout, config);
+
   if (els.plot.removeAllListeners) els.plot.removeAllListeners("plotly_click");
   els.plot.on("plotly_click", (ev) => {
     if (!ev || !ev.points || !ev.points[0]) return;
@@ -218,27 +255,28 @@ function renderPlot() {
 
 function tagToColor(tag) {
   const t = String(tag || "unknown").toLowerCase();
+  // Premium palette mapping
   const map = {
-    plan_generation: "#0c4a6e",
-    fact_retrieval: "#b45309",
-    uncertainty_management: "#7c3aed",
-    result_consolidation: "#0f766e",
-    self_checking: "#9a3412",
-    problem_setup: "#1d4ed8",
-    final_answer_emission: "#6b7280",
-    verbalized_evaluation_awareness: "#c36a2d",
-    unknown: "rgba(25,26,24,0.35)",
+    plan_generation: "#3b82f6",     // blue-500
+    fact_retrieval: "#10b981",      // emerald-500
+    uncertainty_management: "#8b5cf6", // violet-500
+    result_consolidation: "#06b6d4", // cyan-500
+    self_checking: "#ef4444",       // red-500
+    problem_setup: "#64748b",       // slate-500
+    final_answer_emission: "#f59e0b", // amber-500
+    verbalized_evaluation_awareness: "#f97316", // orange-500
+    unknown: "#9ca3af",
   };
-  return map[t] || "rgba(25,26,24,0.35)";
+  return map[t] || "#9ca3af";
 }
 
 function renderGraph() {
   if (!currentProblem || !currentProblem.chunks || currentProblem.chunks.length === 0) {
-    els.graph.innerHTML = "<div class=\"muted\" style=\"padding:14px 16px\">No graph data.</div>";
+    els.graph.innerHTML = "<div style='padding:20px; color:#9ca3af'>No graph data.</div>";
     return;
   }
   if (!window.d3) {
-    els.graph.innerHTML = "<div class=\"muted\" style=\"padding:14px 16px\">D3 failed to load.</div>";
+    els.graph.innerHTML = "<div style='padding:20px; color:red'>D3 failed to load.</div>";
     return;
   }
 
@@ -248,10 +286,7 @@ function renderGraph() {
   const topK = Number(els.topKEdges?.value || 0);
 
   const chunks = currentProblem.chunks.slice().sort((a, b) => Number(a.idx) - Number(b.idx));
-
-  const values = chunks
-    .map((c) => metricValue(c, metric))
-    .filter((v) => v !== null && Number.isFinite(v));
+  const values = chunks.map((c) => metricValue(c, metric)).filter((v) => v !== null && Number.isFinite(v));
   const sortedVals = values.slice().sort((a, b) => a - b);
   const qIndex = Math.floor((thresholdPct / 100) * Math.max(0, sortedVals.length - 1));
   const cutoff = sortedVals.length ? sortedVals[qIndex] : -Infinity;
@@ -263,150 +298,98 @@ function renderGraph() {
   });
   const visibleIds = new Set(visible.map((c) => Number(c.idx)));
 
-  const width = els.graph.clientWidth || 600;
-  const height = els.graph.clientHeight || 520;
-  const r = Math.min(width, height) * 0.36;
-  const cx = width / 2;
-  const cy = height / 2;
-
   els.graph.innerHTML = "";
-  const svg = d3
-    .select(els.graph)
+  const containerWidth = els.graph.clientWidth;
+  const containerHeight = els.graph.clientHeight;
+  const width = containerWidth || 800;
+  const height = containerHeight || 600;
+
+  // D3 Setup with Zoom
+  const svg = d3.select(els.graph)
     .append("svg")
     .attr("width", width)
     .attr("height", height)
     .attr("viewBox", `0 0 ${width} ${height}`);
 
-  const tooltip = d3
-    .select(els.graph)
-    .append("div")
-    .style("position", "absolute")
-    .style("pointer-events", "none")
-    .style("opacity", 0)
-    .style("background", "rgba(255,255,255,0.95)")
-    .style("border", "1px solid rgba(0,0,0,0.12)")
-    .style("border-radius", "12px")
-    .style("padding", "10px 12px")
-    .style("box-shadow", "0 10px 20px rgba(0,0,0,0.08)")
-    .style("font-family", "ui-sans-serif, system-ui")
-    .style("font-size", "12px")
-    .style("max-width", "340px");
+  // Create a group for zooming
+  const g = svg.append("g");
 
-  const vmin = Math.min(...values, 0);
-  const vmax = Math.max(...values, 1);
-  const sizeScale = (v) => {
-    if (v === null || !Number.isFinite(v)) return 6;
-    if (vmax === vmin) return 10;
-    const t = (v - vmin) / (vmax - vmin);
-    return 6 + 10 * Math.max(0, Math.min(1, t));
-  };
+  const zoom = d3.zoom()
+    .scaleExtent([0.5, 4])
+    .on("zoom", (e) => g.attr("transform", e.transform));
 
-  // Build nodes in a circle
+  svg.call(zoom);
+
+  // Layout: Circular for now, but improved
+  const r = Math.min(width, height) * 0.4; // 80% fit
+  const cx = width / 2;
+  const cy = height / 2;
+
+  // Compute positions
   const nodes = visible.map((c, i) => {
     const n = visible.length;
+    // Spiral or Circle? Circle is cleaner for linear flow usually
     const angle = (2 * Math.PI * i) / Math.max(1, n) - Math.PI / 2;
-    const v = metricValue(c, metric);
-    const tags = c.function_tags || [];
-    const primary = tags.find((t) => String(t).trim()) || "unknown";
     return {
       id: Number(c.idx),
       idx: c.idx,
-      angle,
       x: cx + r * Math.cos(angle),
       y: cy + r * Math.sin(angle),
-      value: v,
-      tags,
-      primary,
-      summary: c.summary || "",
-      chunk: c.chunk || "",
+      value: metricValue(c, metric),
+      tags: c.function_tags || [],
+      primary: (c.function_tags || [])[0] || "unknown",
+      chunk: c
     };
   });
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-  // Edges: sequential + depends_on
-  const rawEdges = (currentProblem.edges || []).slice();
+  // Edges
   const edges = [];
+  const rawEdges = currentProblem.edges || [];
+
   for (const e of rawEdges) {
     const s = Number(e.source);
     const t = Number(e.target);
     if (!visibleIds.has(s) || !visibleIds.has(t)) continue;
-    const type = e.type || "causal";
-    const weight = Number.isFinite(e.weight) ? Number(e.weight) : 1;
-    edges.push({ source: s, target: t, type, weight });
+    edges.push({ ...e, source: s, target: t, weight: Number(e.weight || 1) });
   }
 
-  const causal = edges.filter((e) => e.type === "causal");
-  causal.sort((a, b) => b.weight - a.weight);
+  const causal = edges.filter(e => e.type === "causal").sort((a, b) => b.weight - a.weight);
   const causalKept = topK > 0 ? causal.slice(0, topK) : [];
-  const sequential = edges.filter((e) => e.type === "sequential");
+  const sequential = edges.filter(e => e.type === "sequential");
 
-  const drawEdge = (e, style) => {
+  const drawLine = (e, color, w, opacity) => {
     const a = nodeById.get(e.source);
     const b = nodeById.get(e.target);
     if (!a || !b) return;
-    svg
-      .append("line")
-      .attr("x1", a.x)
-      .attr("y1", a.y)
-      .attr("x2", b.x)
-      .attr("y2", b.y)
-      .attr("stroke", style.stroke)
-      .attr("stroke-opacity", style.opacity)
-      .attr("stroke-width", style.width);
+    g.append("line")
+      .attr("x1", a.x).attr("y1", a.y)
+      .attr("x2", b.x).attr("y2", b.y)
+      .attr("stroke", color)
+      .attr("stroke-width", w)
+      .attr("stroke-opacity", opacity);
   };
 
-  // Draw sequential perimeter lightly
-  for (const e of sequential) {
-    drawEdge(e, { stroke: "rgba(0,0,0,0.18)", opacity: 1, width: 1 });
-  }
-  // Draw causal chords
-  for (const e of causalKept) {
-    drawEdge(e, { stroke: "rgba(12,74,110,0.45)", opacity: 1, width: 1.6 });
-  }
+  // Draw Edges
+  sequential.forEach(e => drawLine(e, "#e5e7eb", 1.5, 1));
+  causalKept.forEach(e => drawLine(e, "#0f172a", 1.5, 0.2));
 
-  // Nodes
-  const nodeSel = svg
-    .selectAll("circle.node")
+  // Draw Nodes
+  // Add drop shadow
+  //   const defs = svg.append("defs");
+  //   const dropShadowFilter = defs.append("filter").attr("id", "dropShadow").attr("height", "130%");
+  // ... svg filters are verbose, skip for now.
+
+  const nodeGroups = g.selectAll(".node")
     .data(nodes)
     .enter()
-    .append("circle")
+    .append("g")
     .attr("class", "node")
-    .attr("cx", (d) => d.x)
-    .attr("cy", (d) => d.y)
-    .attr("r", (d) => sizeScale(d.value))
-    .attr("fill", (d) => tagToColor(d.primary))
-    .attr("stroke", (d) =>
-      String(d.id) === String(selectedChunkIdx) ? "rgba(12,74,110,1)" : "rgba(0,0,0,0.25)"
-    )
-    .attr("stroke-width", (d) => (String(d.id) === String(selectedChunkIdx) ? 2.2 : 1))
-    .attr("opacity", (d) => (chunkHasTag({ function_tags: d.tags }, highlightTag) ? 1 : 0.85))
+    .attr("transform", d => `translate(${d.x},${d.y})`)
     .style("cursor", "pointer")
-    .on("mouseenter", (event, d) => {
-      const val = d.value === null || !Number.isFinite(d.value) ? "n/a" : d.value.toFixed(4);
-      tooltip
-        .style("opacity", 1)
-        .html(
-          `<div style="font-weight:700">Chunk ${escapeHtml(d.idx)}</div>` +
-            `<div style="color:rgba(0,0,0,0.65);margin-top:4px"><b>${escapeHtml(metric)}:</b> ${escapeHtml(val)}</div>` +
-            `<div style="margin-top:6px"><b>Tags:</b> ${escapeHtml((d.tags || []).join(", ") || "none")}</div>` +
-            (d.summary ? `<div style="margin-top:6px"><b>Summary:</b> ${escapeHtml(d.summary)}</div>` : "")
-        );
-      const rect = els.graph.getBoundingClientRect();
-      tooltip
-        .style("left", `${event.clientX - rect.left + 14}px`)
-        .style("top", `${event.clientY - rect.top + 14}px`);
-    })
-    .on("mousemove", (event) => {
-      const rect = els.graph.getBoundingClientRect();
-      tooltip
-        .style("left", `${event.clientX - rect.left + 14}px`)
-        .style("top", `${event.clientY - rect.top + 14}px`);
-    })
-    .on("mouseleave", () => {
-      tooltip.style("opacity", 0);
-    })
-    .on("click", (_event, d) => {
+    .on("click", (evt, d) => {
+      evt.stopPropagation(); // prevent zoom drag interfering click
       selectedChunkIdx = d.id;
       renderChunks();
       renderSelectedChunk();
@@ -414,27 +397,45 @@ function renderGraph() {
       renderGraph();
     });
 
-  // Index labels (small)
-  svg
-    .selectAll("text.lbl")
-    .data(nodes)
-    .enter()
-    .append("text")
-    .attr("x", (d) => d.x)
-    .attr("y", (d) => d.y + 3)
+  // Highlight Selection Ring
+  nodeGroups.append("circle")
+    .attr("r", d => d.id == selectedChunkIdx ? 14 : 0)
+    .attr("fill", "transparent")
+    .attr("stroke", "#0ea5e9")
+    .attr("stroke-width", 2)
+    .attr("opacity", 0.6);
+
+  // Main Node Circle
+  nodeGroups.append("circle")
+    .attr("r", d => 6 + (d.value || 0) * 6) // Scale size by value
+    .attr("fill", d => tagToColor(d.primary))
+    .attr("stroke", "white")
+    .attr("stroke-width", 2)
+    .attr("opacity", d => chunkHasTag(d.chunk, highlightTag) ? 1 : 0.4);
+
+  // Node ID Label
+  nodeGroups.append("text")
+    .attr("dy", 3)
     .attr("text-anchor", "middle")
-    .attr("font-size", 9)
-    .attr("fill", "rgba(0,0,0,0.7)")
-    .attr("font-family", "ui-monospace, monospace")
-    .text((d) => d.id);
+    .attr("fill", "white")
+    .attr("font-size", 8)
+    .attr("font-family", "monospace")
+    .style("pointer-events", "none")
+    .text(d => d.id);
+
 }
+
+
+// -- Init --
 
 async function loadProblemById(id) {
   const item = indexData.problems.find((p) => p.id === id);
   if (!item) throw new Error(`Unknown problem id: ${id}`);
+
   const data = await fetchJson(`${DATA_ROOT}/${item.path}`);
   currentProblem = data;
   selectedChunkIdx = (currentProblem.chunks?.[0]?.idx ?? null);
+
   setQueryParam("p", id);
   renderProblemHeader();
   renderChunks();
@@ -448,7 +449,9 @@ function populateProblemSelect() {
   for (const p of indexData.problems) {
     const opt = document.createElement("option");
     opt.value = p.id;
-    opt.textContent = `${p.id} · ${p.title}`;
+    // Shorten title
+    const shortTitle = p.title.length > 50 ? p.title.substring(0, 50) + "..." : p.title;
+    opt.textContent = `${p.id}: ${shortTitle}`;
     els.problemSelect.appendChild(opt);
   }
 }
@@ -457,9 +460,8 @@ async function init() {
   try {
     indexData = await fetchJson(`${DATA_ROOT}/index.json`);
   } catch (e) {
-    els.instruction.textContent =
-      "Failed to load web/data/index.json. Run scripts/build_web_data.py and serve web/ with a local server.";
-    els.chunks.innerHTML = `<div class="chunk"><div class="muted">${escapeHtml(e.message)}</div></div>`;
+    els.instruction.textContent = "Error loading index.json. Ensure server is running.";
+    console.error(e);
     return;
   }
 
@@ -470,29 +472,40 @@ async function init() {
   const initial = requested && indexData.problems.some((p) => p.id === requested) ? requested : first;
   els.problemSelect.value = initial;
 
+  // Event Listeners
   els.problemSelect.addEventListener("change", async () => {
     await loadProblemById(els.problemSelect.value);
   });
+
   els.metricSelect.addEventListener("change", () => {
     renderChunks();
     renderSelectedChunk();
     renderPlot();
     renderGraph();
   });
-  els.highlightTag.addEventListener("change", () => {
+
+  els.highlightTag.addEventListener("input", () => { // Changed to input for realtime
     renderChunks();
-    renderPlot();
     renderGraph();
+    renderPlot();
   });
 
-  els.nodeThreshold?.addEventListener("input", () => {
-    renderGraph();
-  });
-  els.topKEdges?.addEventListener("input", () => {
-    renderGraph();
-  });
+  els.nodeThreshold?.addEventListener("input", renderGraph);
+  els.topKEdges?.addEventListener("input", renderGraph);
+
+  // Resize observer for graph
+  new ResizeObserver(() => {
+    if (currentProblem) renderGraph();
+    if (currentProblem) Plotly.Plots.resize(els.plot);
+  }).observe(els.graph.parentElement);
+
+  new ResizeObserver(() => {
+    if (currentProblem) Plotly.Plots.resize(els.plot);
+  }).observe(els.plot.parentElement);
+
 
   if (initial) await loadProblemById(initial);
 }
 
+// Start
 init();
