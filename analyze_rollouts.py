@@ -2788,30 +2788,35 @@ def analyze_within_problem_variance(
 
             # Consider chunks with importance significantly different from mean as potential forks
             if abs(z_score) > 1.5:  # Threshold can be adjusted
-                potential_forks.append(
-                    {
-                        "chunk_idx": chunk.get("chunk_idx"),
-                        "chunk_text": chunk.get("chunk", ""),
-                        "counterfactual_importance_accuracy": chunk.get(
-                            "counterfactual_importance_accuracy", 0.0
-                        ),
-                        "counterfactual_importance_kl": chunk.get(
-                            "counterfactual_importance_kl", 0.0
-                        ),
-                        "resampling_importance_accuracy": chunk.get(
-                            "resampling_importance_accuracy", 0.0
-                        ),
-                        "resampling_importance_kl": chunk.get(
-                            "resampling_importance_kl", 0.0
-                        ),
-                        "forced_importance_accuracy": chunk.get(
-                            "forced_importance_accuracy", 0.0
-                        ),
-                        "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
-                        "z_score": z_score,
-                        "function_tags": chunk.get("function_tags", []),
-                    }
-                )
+                fork_data = {
+                    "chunk_idx": chunk.get("chunk_idx"),
+                    "chunk_text": chunk.get("chunk", ""),
+                    "counterfactual_importance_accuracy": chunk.get(
+                        "counterfactual_importance_accuracy", 0.0
+                    ),
+                    "counterfactual_importance_kl": chunk.get(
+                        "counterfactual_importance_kl", 0.0
+                    ),
+                    "resampling_importance_accuracy": chunk.get(
+                        "resampling_importance_accuracy", 0.0
+                    ),
+                    "resampling_importance_kl": chunk.get(
+                        "resampling_importance_kl", 0.0
+                    ),
+                    "forced_importance_accuracy": chunk.get(
+                        "forced_importance_accuracy", 0.0
+                    ),
+                    "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
+                    "different_trajectories_fraction": chunk.get(
+                        "different_trajectories_fraction", 0.0
+                    ),
+                    "overdeterminedness": chunk.get("overdeterminedness", 0.0),
+                    "z_score": z_score,
+                    "function_tags": chunk.get("function_tags", []),
+                }
+                # Ensure the selected importance metric is available for reporting.
+                fork_data[importance_metric] = importance
+                potential_forks.append(fork_data)
 
         if potential_forks:
             high_variance_problems.append(
@@ -2851,7 +2856,7 @@ def analyze_within_problem_variance(
 
             for fork in sorted_forks:
                 chunk_idx = fork["chunk_idx"]
-                importance = fork[importance_metric]
+                importance = fork.get(importance_metric, 0.0)
                 z_score = fork["z_score"]
                 tags = (
                     ", ".join(fork["function_tags"])
