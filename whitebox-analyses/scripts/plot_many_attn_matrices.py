@@ -1,9 +1,11 @@
 import sys
 import os
+import sys
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.patches as patches
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,6 +16,43 @@ from attention_analysis.receiver_head_funcs import (
     get_model_rollouts_root,
 )
 from pytorch_models.model_config import model2layers_heads
+
+
+def _load_chunk_labels(
+    problem_num: int, is_correct: bool, model_name: str
+) -> list[list[str]]:
+    """Load chunk-level function tags from chunks_labeled.json (if present)."""
+
+    dir_root = get_model_rollouts_root(model_name)
+    ci = "correct_base_solution" if is_correct else "incorrect_base_solution"
+    fp = os.path.join(dir_root, ci, f"problem_{problem_num}", "chunks_labeled.json")
+    if not os.path.exists(fp):
+        return []
+
+    try:
+        import json
+
+        with open(fp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [c.get("function_tags", []) for c in data if isinstance(c, dict)]
+    except Exception:
+        return []
+
+
+def _highlight_mask(
+    *,
+    labels: list[list[str]],
+    highlight_tag: str,
+) -> np.ndarray:
+    tag = highlight_tag.strip().lower()
+    if not tag or not labels:
+        return np.zeros((0,), dtype=bool)
+
+    out = np.zeros((len(labels),), dtype=bool)
+    for i, tag_list in enumerate(labels):
+        if any(isinstance(t, str) and t.strip().lower() == tag for t in tag_list):
+            out[i] = True
+    return out
 
 
 def white_to_blues(N=256):
@@ -119,6 +158,32 @@ if __name__ == "__main__":
         "--quantile-max", type=float, default=0.95, help="Max quantile for color scale"
     )
 
+    parser.add_argument(
+        "--highlight-tag",
+        type=str,
+        default="verbalized_evaluation_awareness",
+        help="Highlight sentences/chunks with this function tag",
+    )
+    parser.add_argument(
+        "--highlight-color",
+        type=str,
+        default="red",
+        help="Color used for highlighted rows/cols",
+    )
+    parser.add_argument(
+        "--highlight-alpha",
+        type=float,
+        default=0.25,
+        help="Alpha used for highlighted rows/cols",
+    )
+    parser.add_argument(
+        "--highlight-axis",
+        type=str,
+        choices=["rows", "cols", "both"],
+        default="both",
+        help="Whether to highlight rows, cols, or both",
+    )
+
     args = parser.parse_args()
 
     # Get problem numbers
@@ -186,6 +251,11 @@ if __name__ == "__main__":
                 problem_num, is_correct, model_name=args.model_name
             )
 
+            labels = _load_chunk_labels(
+                problem_num, is_correct, model_name=args.model_name
+            )
+            mask = _highlight_mask(labels=labels, highlight_tag=args.highlight_tag)
+
             # Get averaged attention matrix
             avg_matrix = get_avg_attention_matrix(
                 text,
@@ -197,8 +267,26 @@ if __name__ == "__main__":
 
             print(f"{avg_matrix.shape=}")
 
-            # Remove first and last rows/columns (prompt and output)
-            avg_matrix = avg_matrix[1:-1, 1:-1]
+            # Some older pipelines included prompt/output as first/last "sentences".
+            # Our current split_solution_keep_spacing() trims to <think>...</think>.
+            # Drop first/last only when it looks like prompt/output is included.
+            drop_first_last = False
+            if sentences:
+                s0 = sentences[0].strip()
+                sn = sentences[-1].strip()
+                if (
+                    "<|im_start|>user" in s0
+                    or "Instruction:" in s0
+                    or s0.lower().startswith("user:")
+                ):
+                    drop_first_last = True
+                if "final answer" in sn.lower() or "<|im_end|>" in sn:
+                    drop_first_last = True
+
+            if drop_first_last and avg_matrix.shape[0] > 2:
+                avg_matrix = avg_matrix[1:-1, 1:-1]
+                if mask.size:
+                    mask = mask[1:-1]
 
             # Get lower triangle for computing quantiles
             avg_matrix_tril = np.tril(avg_matrix, k=-4)
@@ -212,6 +300,28 @@ if __name__ == "__main__":
             axs[row_idx, col_idx].imshow(
                 avg_matrix, vmin=0, vmax=vmax, cmap=white_blue_cmap
             )
+
+            # Overlay taxonomy highlights
+            if mask.size and mask.shape[0] == avg_matrix.shape[0]:
+                for idx, is_hit in enumerate(mask):
+                    if not is_hit:
+                        continue
+                    if args.highlight_axis in ("rows", "both"):
+                        axs[row_idx, col_idx].axhspan(
+                            idx - 0.5,
+                            idx + 0.5,
+                            color=args.highlight_color,
+                            alpha=args.highlight_alpha,
+                            linewidth=0,
+                        )
+                    if args.highlight_axis in ("cols", "both"):
+                        axs[row_idx, col_idx].axvspan(
+                            idx - 0.5,
+                            idx + 0.5,
+                            color=args.highlight_color,
+                            alpha=args.highlight_alpha,
+                            linewidth=0,
+                        )
 
             # Set title
             if pn_all_same:
