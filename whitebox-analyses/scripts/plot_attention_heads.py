@@ -18,7 +18,7 @@ from attention_analysis.receiver_head_funcs import (
 def plot_dozen_layer_heads(
     target_layer=None,
     highlight_head=6,
-    problem_ci=(1591, True),
+    problem_ci=(0, True),
     key_color="navy",
     top_k=None,
     model_name="qwen-14b",
@@ -102,7 +102,9 @@ def plot_dozen_layer_heads(
     else:
         plt.xticks(np.arange(0, len(vert_scores), 25))
         plt.xlim(0, len(vert_scores) - 1)
-    plt.subplots_adjust(bottom=0.20 if top_k is not None else 0.15, top=0.8, left=0.15, right=0.95)
+    plt.subplots_adjust(
+        bottom=0.20 if top_k is not None else 0.15, top=0.8, left=0.15, right=0.95
+    )
 
     plt.savefig(fp_out, dpi=300)
     plt.show()
@@ -111,27 +113,62 @@ def plot_dozen_layer_heads(
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Plot attention head distributions")
-    parser.add_argument("--problem-num", type=int, default=1591, help="Problem number to analyze")
-    parser.add_argument("--correct", action="store_true", default=True, help="Use correct solution")
+    parser.add_argument(
+        "--problem-num", type=int, default=0, help="Problem number to analyze"
+    )
+    parser.add_argument(
+        "--correct", action="store_true", default=True, help="Use correct solution"
+    )
     parser.add_argument("--layer", type=int, default=20, help="Target layer to plot")
-    parser.add_argument("--highlight-head", type=int, default=0, help="Head to highlight in the plot")
-    parser.add_argument("--top-k", type=int, default=None, help="Plot top K receiver heads instead of single layer")
+    parser.add_argument(
+        "--highlight-head", type=int, default=0, help="Head to highlight in the plot"
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="Plot top K receiver heads instead of single layer",
+    )
     parser.add_argument("--model-name", type=str, default="qwen-15b", help="Model name")
-    parser.add_argument("--proximity-ignore", type=int, default=4, help="Proximity ignore for vertical scores")
-    parser.add_argument("--control-depth", action="store_true", help="Control for depth in vertical scores")
-    parser.add_argument("--key-color", type=str, default="navy", help="Color for highlighted head")
-    parser.add_argument("--output-dir", type=str, default="plots/head_distributions", help="Output directory")
+    parser.add_argument(
+        "--proximity-ignore",
+        type=int,
+        default=4,
+        help="Proximity ignore for vertical scores",
+    )
+    parser.add_argument(
+        "--control-depth",
+        action="store_true",
+        help="Control for depth in vertical scores",
+    )
+    parser.add_argument(
+        "--key-color", type=str, default="navy", help="Color for highlighted head"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="plots/head_distributions",
+        help="Output directory",
+    )
     parser.add_argument("--dpi", type=int, default=300, help="DPI for saved figure")
-    parser.add_argument("--also-plot-matrix", action="store_true", help="Also plot attention matrix")
-    parser.add_argument("--figsize", type=float, nargs=2, default=[8, 3], help="Figure size (width height)")
-    
+    parser.add_argument(
+        "--also-plot-matrix", action="store_true", help="Also plot attention matrix"
+    )
+    parser.add_argument(
+        "--figsize",
+        type=float,
+        nargs=2,
+        default=[8, 3],
+        help="Figure size (width height)",
+    )
+
     args = parser.parse_args()
-    
+
     # Set target_layer to None if using top_k
     target_layer = None if args.top_k else args.layer
-    
+
     plot_dozen_layer_heads(
         problem_ci=(args.problem_num, args.correct),
         target_layer=target_layer,
@@ -142,7 +179,7 @@ if __name__ == "__main__":
         control_depth=args.control_depth,
         key_color=args.key_color,
     )
-    
+
     if args.also_plot_matrix:
         plot_one_attn_mtx(
             problem_num=args.problem_num,
