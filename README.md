@@ -120,7 +120,7 @@ Visualize attention matrices:
 # Average the top-k receiver heads (default top-k is 32)
 uv run python whitebox-analyses/scripts/plot_one_attn_matrix.py \
   --model-name qwen3-4b \
-  --problem-num 4682 \
+  --problem-num 9 \
   --correct \
   --top-k 32 \
   --no-show
@@ -128,7 +128,7 @@ uv run python whitebox-analyses/scripts/plot_one_attn_matrix.py \
 # Plot a specific layer/head (set --top-k 0 to disable averaging)
 uv run python whitebox-analyses/scripts/plot_one_attn_matrix.py \
   --model-name qwen3-4b \
-  --problem-num 4682 \
+  --problem-num 9 \
   --correct \
   --top-k 0 \
   --layer 36 \
