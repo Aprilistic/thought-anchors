@@ -12,6 +12,7 @@ This script outputs CSV files containing:
 import os
 import sys
 import json
+import traceback
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -197,9 +198,7 @@ def calculate_receiver_head_scores_for_problem(
     )
 
     # Get receiver head scores using the top-k heads
-    rec_head_scores = get_receiver_head_scores(
-        top_k_layer_head, layer_head_vert_scores
-    )
+    rec_head_scores = get_receiver_head_scores(top_k_layer_head, layer_head_vert_scores)
 
     return rec_head_scores
 
@@ -229,9 +228,7 @@ def generate_receiver_head_csvs(
 
     all_data = []
 
-    for problem_num, is_correct in tqdm(
-        problems_list, desc="Processing problems"
-    ):
+    for problem_num, is_correct in tqdm(problems_list, desc="Processing problems"):
         try:
             # Get problem text and sentences
             text, sentences_w_spacing = get_problem_text_sentences(
@@ -331,12 +328,24 @@ def generate_receiver_head_csvs(
 
         except Exception as e:
             print(
-                f"Error processing problem {problem_num} (is_correct={is_correct}): {e}"
+                f"Error processing problem {problem_num} (is_correct={is_correct}): {repr(e)}"
             )
+            print(traceback.format_exc())
             continue
 
     # Create DataFrame
-    df = pd.DataFrame(all_data)
+    expected_columns = [
+        "problem_number",
+        "is_correct",
+        "sentence_idx",
+        "sentence",
+        "receiver_head_score",
+        "taxonomic_labels",
+        "pre_convergence",
+        "accuracy",
+        "simple_importance",
+    ]
+    df = pd.DataFrame(all_data, columns=expected_columns)
 
     # Save to CSV files
     # Save all data
@@ -346,6 +355,10 @@ def generate_receiver_head_csvs(
     )
     df.to_csv(all_data_path, index=False)
     print(f"Saved all data to {all_data_path}")
+
+    if df.empty:
+        print("No rows generated; skipping correct/incorrect splits and summary stats")
+        return df
 
     # Save correct solutions only
     df_correct = df[df["is_correct"] == True]
@@ -451,6 +464,4 @@ if __name__ == "__main__":
         max_problems=args.max_problems,
     )
 
-    print(
-        f"\nProcessing complete! Generated CSV files with {len(df)} total rows."
-    )
+    print(f"\nProcessing complete! Generated CSV files with {len(df)} total rows.")
