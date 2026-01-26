@@ -10,26 +10,25 @@ This fork modifies the original project to support running experiments on a cust
 uv sync
 ```
 
-### vLLM Endpoints (Generation + Judge)
+### Runtime Assumptions
 
-This repo assumes OpenAI-compatible vLLM servers.
+- Generation uses a local OpenAI-compatible vLLM server.
+- Judge/classifier uses a local OpenAI-compatible vLLM *chat* server.
+- Embeddings are computed locally via `sentence-transformers` (default: `all-MiniLM-L6-v2`).
 
-Set these env vars as needed:
+Env vars:
 
-- `VLLM_GENERATION_BASE_URL` (default `http://localhost:8000/v1`)
-- `VLLM_JUDGE_BASE_URL` (default: same as generation)
-- `VLLM_API_KEY` (default `local`)
-
-Default models (override via env vars in `llm_endpoints.py`):
-
-- Generation: `Qwen/Qwen3-4B-Thinking-2507`
-- Judge/classifier (local vLLM chat): `Qwen/Qwen3-Next-80B-A3B-Instruct`
-
-Embeddings are computed locally via `sentence-transformers` (default: `all-MiniLM-L6-v2`).
+- `VLLM_GENERATION_BASE_URL` (e.g. `http://0.0.0.0:8001/v1`)
+- `VLLM_JUDGE_BASE_URL` (defaults to generation base url)
+- `VLLM_API_KEY` (optional; vLLM often ignores it but OpenAI SDK requires a non-empty string)
+- `VLLM_GENERATION_MODEL` (default `Qwen/Qwen3-4B-Thinking-2507`)
+- `VLLM_JUDGE_MODEL` (default `Qwen/Qwen3-Next-80B-A3B-Instruct`)
 
 ### Run: Generate Rollouts From JSONL
 
 `generate_rollouts.py` supports `--dataset jsonl` (default) and reads `--dataset_jsonl`.
+
+Important: For vLLM, this fork uses `/v1/completions` and a manual Qwen chat-template prompt (so rollouts are true continuations).
 
 ```bash
 uv run python generate_rollouts.py \
@@ -60,6 +59,21 @@ uv run python analyze_rollouts.py \
   --output_dir analysis
 ```
 
+If your dataset has no ground-truth answers, the analysis automatically switches from accuracy-based importance to `different_trajectories_fraction`.
+
+### Whitebox Analysis
+
+Whitebox scripts assume a `rollouts/<model>/temperature_.../correct_base_solution/problem_*` structure.
+
+For Qwen3-4B:
+
+```bash
+export WHITEBOX_ROLLOUTS_ROOT="rollouts/Qwen3-4B-Thinking-2507/temperature_0.6_top_p_0.95"
+
+uv run python whitebox-analyses/scripts/prep_attn_cache.py --model qwen3-4b
+uv run python whitebox-analyses/scripts/generate_rec_csvs.py --model-name qwen3-4b --data-model qwen3-4b --output-dir csvs
+```
+
 ### Label Taxonomy Change
 
 The labeling prompt in `prompts.py` replaces `active_computation` with:
@@ -81,7 +95,7 @@ uv run python masking_graphs/interactive_rollout_viz.py \
 
 ### Interactive Web Page (thought-anchors.com-style)
 
-This fork also includes a small static site under `web/` that loads exported JSON and renders an interactive dashboard (problem selector, chunk list, Plotly chart).
+This fork also includes a small static site under `web/` that loads exported JSON and renders a 3-column dashboard (chunk list, circular causal graph from `depends_on`, metric plot).
 
 1) Export data from a rollouts directory:
 
