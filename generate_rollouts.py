@@ -754,6 +754,26 @@ def build_vllm_completion_prompt(
     return f"{user_block}{assistant_open}{assistant_prefix}"
 
 
+def split_think_final(text: str) -> Dict[str, str]:
+    """Split a completion into reasoning vs final answer using </think>."""
+
+    if not isinstance(text, str) or not text:
+        return {"reasoning_text": "", "final_text": ""}
+
+    s = text
+    if "<think>" in s:
+        s = s.split("<think>", 1)[1]
+
+    if "</think>" in s:
+        pre, post = s.split("</think>", 1)
+        return {
+            "reasoning_text": pre.strip(),
+            "final_text": post.lstrip(),
+        }
+
+    return {"reasoning_text": s.strip(), "final_text": ""}
+
+
 async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dict:
     """
     Generate a base solution for a problem using Novita API.
@@ -789,6 +809,10 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
                 raise RuntimeError(str(response.get("error")))
             solution_text = response["text"]
 
+            split = split_think_final(solution_text)
+            reasoning_text = split["reasoning_text"]
+            final_text = split["final_text"]
+
             # Extract answer and check correctness
             extracted_answers = extract_answers(solution_text)
             answer = extracted_answers[0] if extracted_answers else ""
@@ -799,6 +823,8 @@ async def generate_base_solution(problem: Dict, temperature: float = 0.6) -> Dic
             return {
                 "prompt": prompt,
                 "solution": solution_text,
+                "reasoning_text": reasoning_text,
+                "final_text": final_text,
                 "full_cot": prompt + solution_text,
                 "answer": answer,
                 "is_correct": is_correct,
@@ -860,7 +886,12 @@ async def generate_rollout(
             if isinstance(response, dict) and response.get("error"):
                 raise RuntimeError(str(response.get("error")))
             rollout_text = response["text"]
-            chunk_resampled = split_solution_into_chunks(rollout_text)[0]
+
+            split = split_think_final(rollout_text)
+            rollout_reasoning_text = split["reasoning_text"]
+            rollout_final_text = split["final_text"]
+
+            chunk_resampled = split_solution_into_chunks(rollout_reasoning_text)[0]
 
             # Extract answer and check correctness
             extracted_answers = extract_answers(
@@ -878,6 +909,8 @@ async def generate_rollout(
                 "prefix_without_chunk": prefix_without_chunk,
                 "chunk_resampled": chunk_resampled,
                 "rollout": rollout_text,
+                "rollout_reasoning_text": rollout_reasoning_text,
+                "rollout_final_text": rollout_final_text,
                 "full_cot": f"{prompt}{rollout_text}",
                 "answer": answer,
                 "is_correct": is_correct,
@@ -951,6 +984,15 @@ async def process_problem(problem_idx: int, problem: Dict) -> None:
 
             # Recalculate accuracy for base solution if needed
             if not args.skip_recalculate and "solution" in base_solution:
+                if (
+                    "reasoning_text" not in base_solution
+                    or "final_text" not in base_solution
+                ):
+                    split = split_think_final(str(base_solution.get("solution", "")))
+                    base_solution["reasoning_text"] = split["reasoning_text"]
+                    base_solution["final_text"] = split["final_text"]
+                    needs_save = True
+
                 extracted_answers = extract_answers(base_solution["solution"])
                 answer = extracted_answers[0] if extracted_answers else ""
                 is_correct = None
