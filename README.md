@@ -68,6 +68,17 @@ The labeling prompt in `prompts.py` replaces `active_computation` with:
 
 Downstream plotting/whitebox taxonomy mappings were updated accordingly.
 
+### Interactive Visualization (Rollouts)
+
+This fork adds a Plotly-based interactive viewer for rollout chunk labels/metrics.
+
+```bash
+uv run python masking_graphs/interactive_rollout_viz.py \
+  --rollouts-dir rollouts/Qwen3-4B-Thinking-2507/temperature_0.6_top_p_0.95/correct_base_solution \
+  --output-dir analysis/interactive \
+  --metric different_trajectories_fraction
+```
+
 ---
 
 We introduce a framework for interpreting the reasoning of large language models by attributing importance to individual sentences in their chain-of-thought. Using black-box, attention-based, and causal methods, we identify key reasoning steps, which we call **thought anchors**, that disproportionately influence downstream reasoning. These anchors are typically planning or backtracking sentences. Our work offers new tools and insights for understanding multi-step reasoning in language models.
