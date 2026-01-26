@@ -161,7 +161,17 @@ def get_top_k_receiver_heads(
 
 
 def get_model_rollouts_root(model_name: str = "qwen-14b") -> str:
-    if "qwen" in model_name:
+    override = os.getenv("WHITEBOX_ROLLOUTS_ROOT")
+    if override:
+        return override.rstrip("/")
+
+    if model_name == "qwen3-4b":
+        dir_root = os.path.join(
+            "rollouts",
+            "Qwen3-4B-Thinking-2507",
+            "temperature_0.6_top_p_0.95",
+        )
+    elif "qwen" in model_name:
         dir_root = os.path.join(
             "rollouts",
             "deepseek-r1-distill-qwen-14b",
@@ -218,10 +228,12 @@ def get_all_problems_vert_scores(
 
     for ci in correct_incorrect:
         if "incorrect" in ci:
-            is_correct = 0
+            is_correct = False
         else:
-            is_correct = 1
+            is_correct = True
         dir_ci = os.path.join(dir_root, ci)
+        if not os.path.exists(dir_ci):
+            continue
         problems = os.listdir(dir_ci)
         for idx_problem, problem in enumerate(problems):
             if (

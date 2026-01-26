@@ -114,7 +114,10 @@ def process_all_problems_kl(
             if save_results:
                 save_path = Path(output_dir) / model_name / correct_str
                 save_path.mkdir(parents=True, exist_ok=True)
-                np.save(save_path / f"problem_{problem_num}_kl.npy", sentence_sentence_scores)
+                np.save(
+                    save_path / f"problem_{problem_num}_kl.npy",
+                    sentence_sentence_scores,
+                )
                 print(f"  Saved to {save_path / f'problem_{problem_num}_kl.npy'}")
 
         except Exception as e:
@@ -140,7 +143,6 @@ def process_all_problems_kl(
         print(f"\nSaved summary to {summary_path}")
 
     return results
-
 
 
 if __name__ == "__main__":

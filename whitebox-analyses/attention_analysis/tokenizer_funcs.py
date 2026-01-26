@@ -64,6 +64,7 @@ class TokenizerFactory:
         "qwen-14b": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
         "qwen-15b": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
         "qwen3": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",  # Assuming same as qwen-15b
+        "qwen3-4b": "Qwen/Qwen3-4B-Thinking-2507",
         "llama": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
         "llama-8b": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
         "gpt-oss": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",  # Uses Llama tokenizer
@@ -84,6 +85,8 @@ class TokenizerFactory:
         if "qwen" in model_name_lower or "qwq" in model_name_lower:
             if model_name == "qwen-14b-base":
                 model_path = cls.MODEL_PATHS["qwen-14b-base"]
+            elif "qwen3-4b" in model_name_lower:
+                model_path = cls.MODEL_PATHS["qwen3-4b"]
             elif "qwen3" in model_name_lower:
                 model_path = cls.MODEL_PATHS["qwen3"]
             elif model_name == "qwen-14b":
@@ -104,7 +107,9 @@ class TokenizerFactory:
 
         elif "deepseek-r1" in model_name_lower:
             model_path = cls.MODEL_PATHS["deepseek-r1"]
-            adapter = LlamaTokenizerAdapter(model_path)  # Assuming it uses similar tokenizer
+            adapter = LlamaTokenizerAdapter(
+                model_path
+            )  # Assuming it uses similar tokenizer
 
         else:
             raise ValueError(f"Unknown model: {model_name}")
