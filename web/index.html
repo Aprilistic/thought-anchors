@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thought Anchors — Local Viewer</title>
+    <meta name="description" content="Interactive visualization for thought-anchor rollouts." />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">⚓</div>
+        <div class="title">
+          <div class="name">Thought Anchors</div>
+          <div class="tagline">Local interactive viewer</div>
+        </div>
+      </div>
+      <nav class="navlinks">
+        <a class="navlink" href="https://github.com/interp-reasoning/thought-anchors" target="_blank" rel="noreferrer">Code</a>
+        <a class="navlink" href="https://arxiv.org/abs/2506.19143" target="_blank" rel="noreferrer">Paper</a>
+      </nav>
+    </header>
+
+    <main class="app">
+      <section class="left">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Problem</div>
+            <div class="panel-sub">Select a problem and inspect chunk-level metrics.</div>
+          </div>
+
+          <div class="controls">
+            <label class="control">
+              <span class="control-label">Problem</span>
+              <select id="problemSelect" class="select"></select>
+            </label>
+
+            <label class="control">
+              <span class="control-label">Metric</span>
+              <select id="metricSelect" class="select">
+                <option value="different_trajectories_fraction">different_trajectories_fraction</option>
+                <option value="overdeterminedness">overdeterminedness</option>
+                <option value="counterfactual_importance_accuracy">counterfactual_importance_accuracy</option>
+              </select>
+            </label>
+
+            <label class="control">
+              <span class="control-label">Highlight tag</span>
+              <input id="highlightTag" class="input" value="verbalized_evaluation_awareness" />
+            </label>
+          </div>
+
+          <div class="instruction" id="instruction"></div>
+
+          <details class="fullcot" id="fullcotDetails">
+            <summary>Show full trace</summary>
+            <pre class="fullcot-pre" id="fullcot"></pre>
+          </details>
+
+          <div class="chunks" id="chunks"></div>
+        </div>
+      </section>
+
+      <section class="center">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Causal Graph</div>
+            <div class="panel-sub">Circle layout from `depends_on` (DAG) + sequential edges.</div>
+          </div>
+          <div class="graph-controls">
+            <label class="control inline">
+              <span class="control-label">Node threshold</span>
+              <input id="nodeThreshold" class="range" type="range" min="0" max="100" value="0" />
+            </label>
+            <label class="control inline">
+              <span class="control-label">Top K causal edges</span>
+              <input id="topKEdges" class="range" type="range" min="0" max="200" value="40" />
+            </label>
+          </div>
+          <div id="graph" class="graph"></div>
+          <div class="legend">
+            <span class="legend-item"><span class="dot seq"></span> sequential</span>
+            <span class="legend-item"><span class="dot causal"></span> depends_on</span>
+            <span class="legend-item"><span class="dot hit"></span> highlight tag</span>
+            <span class="legend-item"><span class="dot sel"></span> selected</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="right">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Metric Plot</div>
+            <div class="panel-sub">Hover points to view chunk text and summary.</div>
+          </div>
+          <div id="plot" class="plot"></div>
+        </div>
+
+        <div class="panel detail">
+          <div class="panel-header">
+            <div class="panel-title">Selected chunk</div>
+            <div class="panel-sub">Click a chunk in the left panel.</div>
+          </div>
+          <div id="selected" class="selected"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>Data source: <code>web/data</code> (generated from rollouts)</div>
+      <div class="muted">Tip: run <code>uv run python -m http.server 8000</code> inside <code>web/</code></div>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

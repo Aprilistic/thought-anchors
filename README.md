@@ -79,6 +79,27 @@ uv run python masking_graphs/interactive_rollout_viz.py \
   --metric different_trajectories_fraction
 ```
 
+### Interactive Web Page (thought-anchors.com-style)
+
+This fork also includes a small static site under `web/` that loads exported JSON and renders an interactive dashboard (problem selector, chunk list, Plotly chart).
+
+1) Export data from a rollouts directory:
+
+```bash
+uv run python scripts/build_web_data.py \
+  --rollouts-dir rollouts/Qwen3-4B-Thinking-2507/temperature_0.6_top_p_0.95/correct_base_solution \
+  --output-dir web/data
+```
+
+2) Serve the site locally:
+
+```bash
+cd web
+uv run python -m http.server 8000
+```
+
+Open `http://localhost:8000`.
+
 ---
 
 We introduce a framework for interpreting the reasoning of large language models by attributing importance to individual sentences in their chain-of-thought. Using black-box, attention-based, and causal methods, we identify key reasoning steps, which we call **thought anchors**, that disproportionately influence downstream reasoning. These anchors are typically planning or backtracking sentences. Our work offers new tools and insights for understanding multi-step reasoning in language models.
