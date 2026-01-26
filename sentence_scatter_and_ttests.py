@@ -243,7 +243,13 @@ if __name__ == "__main__":
         total_chunks = len(problem_data["labeled_chunks"])
         is_converged = False
         for chunk_idx, chunk in enumerate(problem_data["labeled_chunks"]):
-            acc = chunk["accuracy"]
+            acc = chunk.get("accuracy")
+            if acc is None or not np.isfinite(float(acc)):
+                score = chunk.get("score")
+                if score is not None and np.isfinite(float(score)):
+                    acc = float(score)
+                else:
+                    acc = float("nan")
             if acc > convergence_threshold or acc < 1 - convergence_threshold:
                 if not is_converged:
                     convergence_cnt += 1
@@ -280,10 +286,13 @@ if __name__ == "__main__":
             keys = [
                 "resampling_importance_kl",
                 "resampling_importance_accuracy",
+                "resampling_importance_score",
                 "forced_importance_kl",
                 "forced_importance_accuracy",
+                "forced_importance_score",
                 "counterfactual_importance_kl",
                 "counterfactual_importance_accuracy",
+                "counterfactual_importance_score",
             ]
             for key in keys:
                 row[key] = chunk[key]

@@ -73,12 +73,29 @@ def build_chunk_dataframe(
                     "all_tags": ",".join([t for t in tags if isinstance(t, str)]),
                     "summary": chunk.get("summary", ""),
                     "chunk": chunk.get("chunk", ""),
+                    "accuracy": chunk.get("accuracy", None),
+                    "score": chunk.get("score", None),
                     "different_trajectories_fraction": chunk.get(
                         "different_trajectories_fraction", None
                     ),
                     "overdeterminedness": chunk.get("overdeterminedness", None),
                     "counterfactual_importance_accuracy": chunk.get(
                         "counterfactual_importance_accuracy", None
+                    ),
+                    "counterfactual_importance_score": chunk.get(
+                        "counterfactual_importance_score", None
+                    ),
+                    "resampling_importance_accuracy": chunk.get(
+                        "resampling_importance_accuracy", None
+                    ),
+                    "resampling_importance_score": chunk.get(
+                        "resampling_importance_score", None
+                    ),
+                    "forced_importance_accuracy": chunk.get(
+                        "forced_importance_accuracy", None
+                    ),
+                    "forced_importance_score": chunk.get(
+                        "forced_importance_score", None
                     ),
                 }
             )
@@ -110,6 +127,11 @@ def main() -> None:
             "different_trajectories_fraction",
             "overdeterminedness",
             "counterfactual_importance_accuracy",
+            "counterfactual_importance_score",
+            "resampling_importance_accuracy",
+            "resampling_importance_score",
+            "forced_importance_accuracy",
+            "forced_importance_score",
         ],
         help="Y-axis metric to plot",
     )

@@ -59,7 +59,16 @@ uv run python analyze_rollouts.py \
   --output_dir analysis
 ```
 
-If your dataset has no ground-truth answers, the analysis automatically switches from accuracy-based importance to `different_trajectories_fraction`.
+If your dataset has no ground-truth answers:
+
+- If a `rubric` is present (Fortress-style), the analysis switches from `*_importance_accuracy` to the corresponding `*_importance_score`.
+- Otherwise, it switches from accuracy-based importance to `different_trajectories_fraction`.
+
+Rubric scoring fields written to artifacts:
+
+- `base_solution.json`: `rubric_score`, `rubric_grade`, `rubric_votes`, `rubric_is_valid`
+- `chunk_*/solutions.json`: per-rollout `rubric_score` (plus the fields above)
+- `chunks_labeled.json`: per-chunk `score` (mean rubric score for that chunk) and `*_importance_score` metrics
 
 ### Whitebox Analysis
 

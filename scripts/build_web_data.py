@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -135,13 +136,23 @@ def build_problem_payload(ci: str, problem_dir: Path) -> Dict[str, Any]:
                     "function_tags": [t for t in tags if isinstance(t, str)],
                     "depends_on": depends_int,
                     "metrics": {
-                        "different_trajectories_fraction": c.get(
-                            "different_trajectories_fraction"
-                        ),
-                        "overdeterminedness": c.get("overdeterminedness"),
-                        "counterfactual_importance_accuracy": c.get(
-                            "counterfactual_importance_accuracy"
-                        ),
+                        k: v
+                        for k, v in c.items()
+                        if isinstance(v, (int, float))
+                        and not isinstance(v, bool)
+                        and math.isfinite(float(v))
+                        and (
+                            k
+                            in (
+                                "accuracy",
+                                "score",
+                                "different_trajectories_fraction",
+                                "overdeterminedness",
+                            )
+                            or k.endswith("_accuracy")
+                            or k.endswith("_score")
+                            or k.endswith("_kl")
+                        )
                     },
                 }
             )

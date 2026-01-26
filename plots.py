@@ -58,10 +58,13 @@ args = parser.parse_args()
 
 IMPORTANCE_METRICS = [
     "resampling_importance_accuracy",
+    "resampling_importance_score",
     "resampling_importance_kl",
     "counterfactual_importance_accuracy",
+    "counterfactual_importance_score",
     "counterfactual_importance_kl",
     "forced_importance_accuracy",
+    "forced_importance_score",
     "forced_importance_kl",
 ]
 

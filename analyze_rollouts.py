@@ -24,6 +24,116 @@ import scipy.stats as stats
 from matplotlib.lines import Line2D
 
 
+FORTRESS_GRADE_PATTERN = re.compile(r"(?i)GRADE\s*:\s*([YN]+)")
+
+
+def _extract_grade_string(text: str) -> str:
+    """Extract the last GRADE: [YN]+ from a model response."""
+
+    if not isinstance(text, str):
+        return ""
+
+    matches = list(FORTRESS_GRADE_PATTERN.finditer(text))
+    if not matches:
+        return ""
+    return matches[-1].group(1).upper().strip()
+
+
+def _compute_rubric_score(grade: str, num_dim: int) -> Dict:
+    """Compute rubric score (fraction of criteria satisfied) from a grade string."""
+
+    if not grade or len(grade) != num_dim:
+        return {
+            "is_valid": False,
+            "grade": grade,
+            "votes": [],
+            "score": float("nan"),
+        }
+
+    votes = [c == "Y" for c in grade]
+    score = float(sum(votes)) / float(num_dim) if num_dim > 0 else float("nan")
+    return {
+        "is_valid": True,
+        "grade": grade,
+        "votes": votes,
+        "score": score,
+    }
+
+
+def _extract_final_text_from_solution(solution: str) -> str:
+    """Best-effort split of model output into final text after </think>."""
+
+    if not isinstance(solution, str) or not solution:
+        return ""
+    if "</think>" in solution:
+        return solution.split("</think>", 1)[1].lstrip()
+    return solution.strip()
+
+
+def score_final_output_with_rubric(
+    *,
+    final_text: str,
+    rubric: List[str],
+    prompt_text: str = "",
+    model_name: Optional[str] = None,
+    max_tokens: int = 256,
+) -> Dict:
+    """Score final output against a Fortress-style rubric using vLLM judge chat."""
+
+    criteria = [c for c in rubric if isinstance(c, str) and c.strip()]
+    num_dim = len(criteria)
+    if num_dim == 0:
+        return {
+            "is_valid": False,
+            "grade": "",
+            "votes": [],
+            "score": float("nan"),
+            "raw": "",
+            "error": "missing_rubric",
+        }
+
+    model = model_name or ENDPOINTS.vllm_judge_model
+    rubric_block = "\n".join([f"{i + 1}. {c}" for i, c in enumerate(criteria)])
+    prompt_prefix = (
+        f"User instruction:\n{prompt_text.strip()}\n\n" if prompt_text else ""
+    )
+
+    user_msg = (
+        "After assessing the submitted answer, reply with 'GRADE: $STRING' where STRING is made of Y or N. "
+        "Choose Y if the criterion is satisfied and N otherwise. "
+        "You MUST ensure the number of Y/N characters equals the number of criteria. "
+        "Return ONLY a single line of the form: GRADE: YNY...\n\n"
+        f"Criteria ({num_dim}):\n{rubric_block}\n\n"
+        f"{prompt_prefix}"
+        "Submitted answer (final output only):\n"
+        f"{final_text.strip()}\n"
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": user_msg}],
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        raw = resp.choices[0].message.content or ""
+    except Exception as e:
+        return {
+            "is_valid": False,
+            "grade": "",
+            "votes": [],
+            "score": float("nan"),
+            "raw": "",
+            "error": str(e),
+        }
+
+    grade = _extract_grade_string(raw)
+    scored = _compute_rubric_score(grade, num_dim)
+    scored["raw"] = raw
+    scored["num_dim"] = num_dim
+    return scored
+
+
 def _extract_first_json_object(text: str) -> Dict:
     """Extract the first JSON object from a model response."""
 
@@ -82,10 +192,13 @@ embedding_model_cache = {}
 
 IMPORTANCE_METRICS = [
     "resampling_importance_accuracy",
+    "resampling_importance_score",
     "resampling_importance_kl",
     "counterfactual_importance_accuracy",
+    "counterfactual_importance_score",
     "counterfactual_importance_kl",
     "forced_importance_accuracy",
+    "forced_importance_score",
     "forced_importance_kl",
 ]
 
@@ -573,9 +686,11 @@ def process_chunk_importance(
     chunk_info,
     chunk_embedding_cache,
     chunk_accuracies,
+    chunk_scores,
     args,
     problem_dir=None,
     forced_answer_accuracies=None,
+    forced_answer_scores=None,
     chunk_answers=None,
 ):
     """Process importance metrics for a single chunk.
@@ -585,9 +700,11 @@ def process_chunk_importance(
         chunk_info: Dictionary containing chunk information
         chunk_embedding_cache: Cache of chunk embeddings
         chunk_accuracies: Dictionary of chunk accuracies
+        chunk_scores: Dictionary of chunk rubric scores
         args: Arguments containing processing parameters
         problem_dir: Path to the problem directory (needed for some metrics)
         forced_answer_accuracies: Dictionary of forced answer accuracies
+        forced_answer_scores: Dictionary of forced answer rubric scores
         chunk_answers: Dictionary of chunk answers
 
     Returns:
@@ -601,6 +718,9 @@ def process_chunk_importance(
             chunk_idx, chunk_info, chunk_embedding_cache, chunk_accuracies, args
         )
     )
+    cf_score, _, _ = calculate_counterfactual_importance_score(
+        chunk_idx, chunk_info, chunk_embedding_cache, chunk_scores, args
+    )
     cf_kl = calculate_counterfactual_importance_kl(
         chunk_idx,
         chunk_info,
@@ -612,6 +732,7 @@ def process_chunk_importance(
     metrics.update(
         {
             "counterfactual_importance_accuracy": cf_acc,
+            "counterfactual_importance_score": cf_score,
             "counterfactual_importance_kl": cf_kl,
             "different_trajectories_fraction": different_trajectories_fraction,
             "overdeterminedness": overdeterminedness,
@@ -620,6 +741,7 @@ def process_chunk_importance(
 
     # Calculate resampling importance metrics
     rs_acc = calculate_resampling_importance_accuracy(chunk_idx, chunk_accuracies, args)
+    rs_score = calculate_resampling_importance_score(chunk_idx, chunk_scores, args)
     rs_kl = (
         calculate_resampling_importance_kl(chunk_idx, chunk_info, problem_dir, args)
         if problem_dir
@@ -628,6 +750,7 @@ def process_chunk_importance(
     metrics.update(
         {
             "resampling_importance_accuracy": rs_acc,
+            "resampling_importance_score": rs_score,
             "resampling_importance_kl": rs_kl,
         }
     )
@@ -640,6 +763,9 @@ def process_chunk_importance(
     ):
         forced_acc = calculate_forced_importance_accuracy(
             chunk_idx, forced_answer_accuracies, args
+        )
+        forced_score = calculate_forced_importance_score(
+            chunk_idx, forced_answer_scores or {}, args
         )
         forced_kl = (
             calculate_forced_importance_kl(
@@ -655,6 +781,7 @@ def process_chunk_importance(
         metrics.update(
             {
                 "forced_importance_accuracy": forced_acc,
+                "forced_importance_score": forced_score,
                 "forced_importance_kl": forced_kl,
             }
         )
@@ -781,6 +908,94 @@ def calculate_counterfactual_importance_accuracy(
     # Compare dissimilar solutions with next chunk solutions
     diff = dissimilar_accuracy - next_accuracy
 
+    diff = (
+        abs(diff)
+        if hasattr(args, "use_abs_importance") and args.use_abs_importance
+        else diff
+    )
+    return diff, different_trajectories_fraction, overdeterminedness
+
+
+def calculate_counterfactual_importance_score(
+    chunk_idx, chunk_info, chunk_embedding_cache, chunk_scores, args
+):
+    """Calculate counterfactual importance for a chunk based on rubric score deltas."""
+
+    if chunk_idx not in chunk_info:
+        return 0.0, 0.0, 0.0
+
+    # Find next chunks
+    next_chunks = [idx for idx in chunk_info.keys() if idx > chunk_idx]
+    if not next_chunks:
+        return 0.0, 0.0, 0.0
+
+    next_chunk_idx = min(next_chunks)
+
+    current_solutions = chunk_info[chunk_idx]
+    next_solutions = chunk_info.get(next_chunk_idx, [])
+
+    dissimilar_solutions = []
+    different_trajectories_count = 0
+    chunk_pairs = []
+
+    for sol in current_solutions:
+        removed = sol.get("chunk_removed", "")
+        resampled = sol.get("chunk_resampled", "")
+
+        if (
+            isinstance(removed, str)
+            and isinstance(resampled, str)
+            and removed in chunk_embedding_cache
+            and resampled in chunk_embedding_cache
+        ):
+            removed_embedding = chunk_embedding_cache[removed]
+            resampled_embedding = chunk_embedding_cache[resampled]
+            similarity = np.dot(removed_embedding, resampled_embedding) / (
+                np.linalg.norm(removed_embedding) * np.linalg.norm(resampled_embedding)
+            )
+            if similarity < args.similarity_threshold:
+                dissimilar_solutions.append(sol)
+                different_trajectories_count += 1
+            chunk_pairs.append((removed, resampled, sol))
+
+    different_trajectories_fraction = (
+        different_trajectories_count / len(current_solutions)
+        if current_solutions
+        else 0.0
+    )
+
+    resampled_chunks_str = [pair[1] for pair in chunk_pairs]
+    unique_resampled = set(resampled_chunks_str)
+    overdeterminedness = (
+        1.0 - (len(unique_resampled) / len(resampled_chunks_str))
+        if resampled_chunks_str
+        else 0.0
+    )
+
+    if not dissimilar_solutions or not next_solutions:
+        return 0.0, different_trajectories_fraction, overdeterminedness
+
+    dissimilar_scores = [
+        float(sol.get("rubric_score"))
+        for sol in dissimilar_solutions
+        if isinstance(sol, dict)
+        and isinstance(sol.get("rubric_score"), (int, float))
+        and np.isfinite(float(sol.get("rubric_score")))
+    ]
+    next_scores = [
+        float(sol.get("rubric_score"))
+        for sol in next_solutions
+        if isinstance(sol, dict)
+        and isinstance(sol.get("rubric_score"), (int, float))
+        and np.isfinite(float(sol.get("rubric_score")))
+    ]
+
+    if not dissimilar_scores or not next_scores:
+        return 0.0, different_trajectories_fraction, overdeterminedness
+
+    dissimilar_mean = float(np.mean(dissimilar_scores))
+    next_mean = float(np.mean(next_scores))
+    diff = dissimilar_mean - next_mean
     diff = (
         abs(diff)
         if hasattr(args, "use_abs_importance") and args.use_abs_importance
@@ -971,6 +1186,41 @@ def calculate_resampling_importance_accuracy(chunk_idx, chunk_accuracies, args=N
     return diff
 
 
+def calculate_resampling_importance_score(chunk_idx, chunk_scores, args=None):
+    """Calculate resampling importance for a chunk based on rubric score deltas."""
+
+    if not chunk_scores or chunk_idx not in chunk_scores:
+        return 0.0
+
+    current_score = chunk_scores[chunk_idx]
+    if not isinstance(current_score, (int, float)) or not np.isfinite(
+        float(current_score)
+    ):
+        return 0.0
+
+    prev_scores = [
+        float(s)
+        for idx, s in chunk_scores.items()
+        if idx <= chunk_idx and isinstance(s, (int, float)) and np.isfinite(float(s))
+    ]
+    next_scores = [
+        float(s)
+        for idx, s in chunk_scores.items()
+        if idx == chunk_idx + 1
+        and isinstance(s, (int, float))
+        and np.isfinite(float(s))
+    ]
+
+    if not prev_scores or not next_scores:
+        return 0.0
+
+    next_avg_score = float(sum(next_scores) / len(next_scores))
+    diff = next_avg_score - float(current_score)
+    if args and hasattr(args, "use_abs_importance") and args.use_abs_importance:
+        return abs(diff)
+    return diff
+
+
 def calculate_resampling_importance_kl(chunk_idx, chunk_info, problem_dir, args=None):
     """
     Calculate resampling importance for a chunk based on KL divergence.
@@ -1067,6 +1317,34 @@ def calculate_forced_importance_accuracy(
     # Calculate the difference
     diff = next_forced_accuracy - current_forced_accuracy
 
+    if args and hasattr(args, "use_abs_importance") and args.use_abs_importance:
+        return abs(diff)
+    return diff
+
+
+def calculate_forced_importance_score(chunk_idx, forced_answer_scores, args=None):
+    """Calculate forced importance for a chunk based on rubric score deltas."""
+
+    if not forced_answer_scores or chunk_idx not in forced_answer_scores:
+        return 0.0
+
+    next_chunks = [idx for idx in forced_answer_scores.keys() if idx > chunk_idx]
+    if not next_chunks:
+        return 0.0
+
+    next_chunk_idx = min(next_chunks)
+    current_score = forced_answer_scores.get(chunk_idx)
+    next_score = forced_answer_scores.get(next_chunk_idx)
+
+    if (
+        not isinstance(current_score, (int, float))
+        or not np.isfinite(float(current_score))
+        or not isinstance(next_score, (int, float))
+        or not np.isfinite(float(next_score))
+    ):
+        return 0.0
+
+    diff = float(next_score) - float(current_score)
     if args and hasattr(args, "use_abs_importance") and args.use_abs_importance:
         return abs(diff)
     return diff
@@ -1392,6 +1670,42 @@ def analyze_problem(
     # Fortress-style datasets often have no ground-truth answers; treat correctness metrics as unavailable.
     has_gt = bool(problem.get("gt_answer") or base_solution.get("gt_answer"))
 
+    rubric = problem.get("rubric", [])
+    has_rubric = isinstance(rubric, list) and any(
+        isinstance(c, str) and c.strip() for c in rubric
+    )
+
+    # Score base solution final output (best-effort) if rubric is available.
+    if has_rubric:
+        base_final_text = base_solution.get("final_text")
+        if not isinstance(base_final_text, str) or not base_final_text.strip():
+            base_final_text = _extract_final_text_from_solution(
+                str(base_solution.get("solution", ""))
+            )
+
+        if (
+            "rubric_score" not in base_solution
+            or base_solution.get("rubric_score") is None
+        ):
+            instruction_text = (
+                problem.get("instruction")
+                or problem.get("prompt")
+                or problem.get("problem")
+                or ""
+            )
+            scored = score_final_output_with_rubric(
+                final_text=base_final_text,
+                rubric=rubric,
+                prompt_text=instruction_text,
+            )
+            base_solution["rubric_score"] = scored.get("score")
+            base_solution["rubric_grade"] = scored.get("grade")
+            base_solution["rubric_votes"] = scored.get("votes")
+            base_solution["rubric_is_valid"] = scored.get("is_valid")
+            base_solution["final_text"] = base_final_text
+            with open(base_solution_file, "w", encoding="utf-8") as f:
+                json.dump(base_solution, f, indent=2)
+
     # Load chunks
     with open(chunks_file, "r", encoding="utf-8") as f:
         chunks_data = json.load(f)
@@ -1441,11 +1755,16 @@ def analyze_problem(
     # Pre-calculate accuracies for all chunks - do this once instead of repeatedly
     print(f"Problem {problem_dir.name}: Pre-calculating chunk accuracies")
     chunk_accuracies = {}
+    chunk_scores = {}
     chunk_answers = {}
     chunk_info = {}  # Store resampled chunks and answers
 
+    # Cache rubric scoring by final text within a problem
+    rubric_score_cache: Dict[str, Dict] = {}
+
     # Load forced answer accuracies if available
     forced_answer_accuracies = {}
+    forced_answer_scores = {}
     if forced_answer_dir:
         forced_problem_dir = forced_answer_dir / problem_dir.name
         if forced_problem_dir.exists():
@@ -1459,6 +1778,50 @@ def analyze_problem(
                         try:
                             with open(solutions_file, "r", encoding="utf-8") as f:
                                 solutions = json.load(f)
+
+                            updated_solutions = False
+                            if has_rubric:
+                                instruction_text = (
+                                    problem.get("instruction")
+                                    or problem.get("prompt")
+                                    or problem.get("problem")
+                                    or ""
+                                )
+                                for sol in solutions:
+                                    if not isinstance(sol, dict):
+                                        continue
+                                    if sol.get("rubric_score") is not None:
+                                        continue
+
+                                    final_text = sol.get("rollout_final_text")
+                                    if (
+                                        not isinstance(final_text, str)
+                                        or not final_text.strip()
+                                    ):
+                                        final_text = _extract_final_text_from_solution(
+                                            str(sol.get("rollout", ""))
+                                        )
+                                    final_text = final_text.strip()
+
+                                    cached = rubric_score_cache.get(final_text)
+                                    if cached is None:
+                                        cached = score_final_output_with_rubric(
+                                            final_text=final_text,
+                                            rubric=rubric,
+                                            prompt_text=instruction_text,
+                                        )
+                                        rubric_score_cache[final_text] = cached
+
+                                    sol["rubric_score"] = cached.get("score")
+                                    sol["rubric_grade"] = cached.get("grade")
+                                    sol["rubric_votes"] = cached.get("votes")
+                                    sol["rubric_is_valid"] = cached.get("is_valid")
+                                    sol["rollout_final_text"] = final_text
+                                    updated_solutions = True
+
+                            if updated_solutions:
+                                with open(solutions_file, "w", encoding="utf-8") as f:
+                                    json.dump(solutions, f, indent=2)
 
                             if has_gt:
                                 correct_count = sum(
@@ -1482,13 +1845,30 @@ def analyze_problem(
                             else:
                                 forced_answer_accuracies[chunk_idx] = float("nan")
 
+                            if has_rubric:
+                                scores = [
+                                    s.get("rubric_score")
+                                    for s in solutions
+                                    if isinstance(s, dict)
+                                    and isinstance(s.get("rubric_score"), (int, float))
+                                    and np.isfinite(float(s.get("rubric_score")))
+                                ]
+                                forced_answer_scores[chunk_idx] = (
+                                    float(np.mean(scores)) if scores else float("nan")
+                                )
+                            else:
+                                forced_answer_scores[chunk_idx] = float("nan")
+
                         except Exception as e:
                             print(f"Error loading solutions from {solutions_file}: {e}")
                             forced_answer_accuracies[chunk_idx] = 0.0
+                            forced_answer_scores[chunk_idx] = float("nan")
                     else:
                         forced_answer_accuracies[chunk_idx] = 0.0
+                        forced_answer_scores[chunk_idx] = float("nan")
                 else:
                     forced_answer_accuracies[chunk_idx] = 0.0
+                    forced_answer_scores[chunk_idx] = float("nan")
 
     for chunk_idx in valid_chunk_indices:
         chunk_dir = problem_dir / f"chunk_{chunk_idx}"
@@ -1497,6 +1877,47 @@ def analyze_problem(
         if solutions_file.exists():
             with open(solutions_file, "r", encoding="utf-8") as f:
                 solutions = json.load(f)
+
+            updated_solutions = False
+            if has_rubric:
+                instruction_text = (
+                    problem.get("instruction")
+                    or problem.get("prompt")
+                    or problem.get("problem")
+                    or ""
+                )
+                for sol in solutions:
+                    if not isinstance(sol, dict):
+                        continue
+                    if sol.get("rubric_score") is not None:
+                        continue
+
+                    final_text = sol.get("rollout_final_text")
+                    if not isinstance(final_text, str) or not final_text.strip():
+                        final_text = _extract_final_text_from_solution(
+                            str(sol.get("rollout", ""))
+                        )
+                    final_text = final_text.strip()
+
+                    cached = rubric_score_cache.get(final_text)
+                    if cached is None:
+                        cached = score_final_output_with_rubric(
+                            final_text=final_text,
+                            rubric=rubric,
+                            prompt_text=instruction_text,
+                        )
+                        rubric_score_cache[final_text] = cached
+
+                    sol["rubric_score"] = cached.get("score")
+                    sol["rubric_grade"] = cached.get("grade")
+                    sol["rubric_votes"] = cached.get("votes")
+                    sol["rubric_is_valid"] = cached.get("is_valid")
+                    sol["rollout_final_text"] = final_text
+                    updated_solutions = True
+
+            if updated_solutions:
+                with open(solutions_file, "w", encoding="utf-8") as f:
+                    json.dump(solutions, f, indent=2)
 
             if has_gt:
                 correct = sum(
@@ -1514,6 +1935,20 @@ def analyze_problem(
                 chunk_accuracies[chunk_idx] = correct / total if total > 0 else 0.0
             else:
                 chunk_accuracies[chunk_idx] = float("nan")
+
+            if has_rubric:
+                scores = [
+                    s.get("rubric_score")
+                    for s in solutions
+                    if isinstance(s, dict)
+                    and isinstance(s.get("rubric_score"), (int, float))
+                    and np.isfinite(float(s.get("rubric_score")))
+                ]
+                chunk_scores[chunk_idx] = (
+                    float(np.mean(scores)) if scores else float("nan")
+                )
+            else:
+                chunk_scores[chunk_idx] = float("nan")
 
             # Calculate average token count
             if solutions:
@@ -1541,17 +1976,18 @@ def analyze_problem(
                     if not raw_answer:
                         raw_answer = sol.get("rollout", "") or sol.get("full_cot", "")
 
-                    chunk_info[chunk_idx].append(
-                        {
-                            "chunk_removed": sol.get("chunk_removed", ""),
-                            "chunk_resampled": sol.get("chunk_resampled", ""),
-                            "full_cot": sol.get("full_cot", ""),
-                            "is_correct": sol.get("is_correct", False),
-                            "answer": normalize_answer(raw_answer)[:256]
-                            if isinstance(raw_answer, str)
-                            else "",
-                        }
-                    )
+                chunk_info[chunk_idx].append(
+                    {
+                        "chunk_removed": sol.get("chunk_removed", ""),
+                        "chunk_resampled": sol.get("chunk_resampled", ""),
+                        "full_cot": sol.get("full_cot", ""),
+                        "is_correct": sol.get("is_correct", False),
+                        "rubric_score": sol.get("rubric_score", None),
+                        "answer": normalize_answer(raw_answer)[:256]
+                        if isinstance(raw_answer, str)
+                        else "",
+                    }
+                )
 
     # Initialize embedding model (local SentenceTransformer) and cache at the problem level
     global embedding_model_cache
@@ -1698,9 +2134,11 @@ def analyze_problem(
                 chunk_info=chunk_info,
                 chunk_embedding_cache=chunk_embedding_cache,
                 chunk_accuracies=chunk_accuracies,
+                chunk_scores=chunk_scores,
                 args=args_obj,
                 problem_dir=problem_dir,
                 forced_answer_accuracies=forced_answer_accuracies,
+                forced_answer_scores=forced_answer_scores,
                 chunk_answers=chunk_answers,
             )
 
@@ -1724,11 +2162,15 @@ def analyze_problem(
                             "function_tags",
                             "depends_on",
                             "accuracy",
+                            "score",
                             "resampling_importance_accuracy",
+                            "resampling_importance_score",
                             "resampling_importance_kl",
                             "counterfactual_importance_accuracy",
+                            "counterfactual_importance_score",
                             "counterfactual_importance_kl",
                             "forced_importance_accuracy",
+                            "forced_importance_score",
                             "forced_importance_kl",
                             "different_trajectories_fraction",
                             "overdeterminedness",
@@ -1752,7 +2194,11 @@ def analyze_problem(
                         break
 
             for chunk in labeled_chunks:
-                chunk.update({"accuracy": chunk_accuracies[chunk["chunk_idx"]]})
+                chunk_idx = chunk.get("chunk_idx")
+                if chunk_idx in chunk_accuracies:
+                    chunk.update({"accuracy": chunk_accuracies[chunk_idx]})
+                if chunk_idx in chunk_scores:
+                    chunk.update({"score": chunk_scores[chunk_idx]})
 
             # Save updated labeled chunks
             with open(labeled_chunks_file, "w", encoding="utf-8") as f:
@@ -1806,9 +2252,11 @@ def analyze_problem(
                     chunk_info=chunk_info,
                     chunk_embedding_cache=chunk_embedding_cache,
                     chunk_accuracies=chunk_accuracies,
+                    chunk_scores=chunk_scores,
                     args=args_obj,
                     problem_dir=problem_dir,
                     forced_answer_accuracies=forced_answer_accuracies,
+                    forced_answer_scores=forced_answer_scores,
                     chunk_answers=chunk_answers,
                 )
 
@@ -1853,6 +2301,8 @@ def analyze_problem(
                         break
 
                 chunk_data.update({"accuracy": chunk_accuracies[chunk_idx]})
+                if chunk_idx in chunk_scores:
+                    chunk_data["score"] = chunk_scores[chunk_idx]
                 labeled_chunks.append(chunk_data)
 
             with open(labeled_chunks_file, "w", encoding="utf-8") as f:
@@ -1915,7 +2365,9 @@ def analyze_problem(
         "problem_type": problem.get("type"),
         "problem_level": problem.get("level"),
         "base_accuracy": base_solution.get("is_correct", False),
+        "base_score": base_solution.get("rubric_score", float("nan")),
         "has_gt": has_gt,
+        "has_rubric": has_rubric,
         "num_chunks": len(chunks),
         "labeled_chunks": labeled_chunks,
         "token_counts": token_counts,
@@ -1945,6 +2397,8 @@ def generate_plots(
     y_label = "Importance (%)"
     if "accuracy" in importance_metric:
         y_label = "Importance (Accuracy Difference %)"
+    elif "score" in importance_metric:
+        y_label = "Importance (Score Difference %)"
     elif "kl" in importance_metric:
         y_label = "Importance (KL Divergence)"
     elif importance_metric == "different_trajectories_fraction":
@@ -1990,16 +2444,23 @@ def generate_plots(
                 "counterfactual_importance_accuracy": chunk.get(
                     "counterfactual_importance_accuracy", 0.0
                 ),
+                "counterfactual_importance_score": chunk.get(
+                    "counterfactual_importance_score", 0.0
+                ),
                 "counterfactual_importance_kl": chunk.get(
                     "counterfactual_importance_kl", 0.0
                 ),
                 "resampling_importance_accuracy": chunk.get(
                     "resampling_importance_accuracy", 0.0
                 ),
+                "resampling_importance_score": chunk.get(
+                    "resampling_importance_score", 0.0
+                ),
                 "resampling_importance_kl": chunk.get("resampling_importance_kl", 0.0),
                 "forced_importance_accuracy": chunk.get(
                     "forced_importance_accuracy", 0.0
                 ),
+                "forced_importance_score": chunk.get("forced_importance_score", 0.0),
                 "forced_importance_kl": chunk.get("forced_importance_kl", 0.0),
                 "different_trajectories_fraction": chunk.get(
                     "different_trajectories_fraction", 0.0
@@ -2010,10 +2471,16 @@ def generate_plots(
             all_chunks.append(chunk_data)
 
             # If forced importance is available, add to the forced importance list
-            if "forced_importance_accuracy" in chunk:
+            if (
+                "forced_importance_accuracy" in chunk
+                or "forced_importance_score" in chunk
+            ):
                 forced_chunk_data = chunk_data.copy()
                 forced_chunk_data["forced_importance_accuracy"] = chunk.get(
                     "forced_importance_accuracy", 0.0
+                )
+                forced_chunk_data["forced_importance_score"] = chunk.get(
+                    "forced_importance_score", 0.0
                 )
                 all_chunks_with_forced.append(forced_chunk_data)
 
@@ -2037,9 +2504,12 @@ def generate_plots(
         plt.figure(figsize=(12, 8))
         # Calculate mean importance for each category to sort by
         # Convert to percentage for display
-        df_forced_exploded["importance_pct"] = (
-            df_forced_exploded["forced_importance_accuracy"] * 100
+        forced_pct_key = (
+            "forced_importance_score"
+            if "score" in importance_metric
+            else "forced_importance_accuracy"
         )
+        df_forced_exploded["importance_pct"] = df_forced_exploded[forced_pct_key] * 100
         category_means = (
             df_forced_exploded.groupby("function_tags", observed=True)["importance_pct"]
             .mean()
@@ -2083,7 +2553,13 @@ def generate_plots(
         ax.legend(handles=legend_elements, loc="upper right")
 
         plt.title("Forced Importance by Category")
-        plt.ylabel("Forced Importance (Accuracy Difference %)")
+        plt.ylabel(
+            "Forced Importance (Accuracy Difference %)"
+            if "accuracy" in importance_metric
+            else "Forced Importance (Score Difference %)"
+            if "score" in importance_metric
+            else "Forced Importance (%)"
+        )
         plt.xlabel(None)
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
@@ -2094,8 +2570,14 @@ def generate_plots(
         # Calculate category means for both metrics
         both_metrics = []
 
+        forced_metric = (
+            "forced_importance_score"
+            if "score" in importance_metric
+            else "forced_importance_accuracy"
+        )
+
         # Metrics to compare
-        metrics = [importance_metric, "forced_importance_accuracy"]
+        metrics = [importance_metric, forced_metric]
         metric_labels = ["Normal Importance", "Forced Importance"]
 
         # Find categories present in both datasets
@@ -2115,7 +2597,7 @@ def generate_plots(
             # Get mean for forced importance
             forced_mean = (
                 df_forced_exploded[df_forced_exploded["function_tags"] == category][
-                    "forced_importance_accuracy"
+                    forced_metric
                 ].mean()
                 * 100
             )
@@ -2935,6 +3417,15 @@ def plot_chunk_accuracy_by_position(
     """
     print("Plotting chunk accuracy by position...")
 
+    has_any_gt = any(bool(r.get("has_gt")) for r in results)
+    has_any_rubric = any(bool(r.get("has_rubric")) for r in results)
+    y_key = "accuracy" if has_any_gt or not has_any_rubric else "score"
+    forced_importance_key = (
+        "forced_importance_accuracy"
+        if has_any_gt or not has_any_rubric
+        else "forced_importance_score"
+    )
+
     # Create explore directory
     explore_dir = output_dir / "explore"
     explore_dir.mkdir(exist_ok=True, parents=True)
@@ -2963,10 +3454,10 @@ def plot_chunk_accuracy_by_position(
                 continue
 
             # Get the solutions for this chunk
-            accuracy = chunk.get("accuracy", 0.0)
+            accuracy = chunk.get(y_key, 0.0)
 
             # Get forced importance if available
-            forced_importance = chunk.get("forced_importance_accuracy", None)
+            forced_importance = chunk.get(forced_importance_key, None)
 
             # Get the first function tag if available
             function_tags = chunk.get("function_tags", [])
@@ -3092,7 +3583,12 @@ def plot_chunk_accuracy_by_position(
 
         # Add labels and title
         plt.xlabel("Sentence Index")
-        plt.ylabel("Forced Importance (Difference in Accuracy)")
+        ylabel = (
+            "Forced Importance (Difference in Accuracy)"
+            if forced_importance_key.endswith("_accuracy")
+            else "Forced Importance (Difference in Score)"
+        )
+        plt.ylabel(ylabel)
         plt.title("Forced Importance by Sentence Index (First 100 Sentences)")
 
         # Set x-axis limits to focus on first 100 chunks
@@ -3224,8 +3720,12 @@ def plot_chunk_accuracy_by_position(
 
     # Add labels and title
     plt.xlabel("Sentence index")
-    plt.ylabel("Accuracy")
-    plt.title("Accuracy by position (first 100 sentences)")
+    plt.ylabel("Accuracy" if y_key == "accuracy" else "Score")
+    plt.title(
+        "Accuracy by position (first 100 sentences)"
+        if y_key == "accuracy"
+        else "Score by position (first 100 sentences)"
+    )
 
     # Set x-axis limits to focus on first 100 chunks
     plt.xlim(-3, 300 if max_chunks_to_show is None else max_chunks_to_show)
@@ -3513,12 +4013,28 @@ def process_rollouts(
 
     # Generate plots
     has_any_gt = any(bool(r.get("has_gt")) for r in results)
+    has_any_rubric = any(bool(r.get("has_rubric")) for r in results)
     if not has_any_gt and importance_metric.endswith("_accuracy"):
-        print(
-            "No ground-truth answers detected; switching importance metric from "
-            f"{importance_metric} to different_trajectories_fraction"
-        )
-        importance_metric = "different_trajectories_fraction"
+        if has_any_rubric:
+            score_metric = importance_metric[: -len("_accuracy")] + "_score"
+            if score_metric in IMPORTANCE_METRICS:
+                print(
+                    "No ground-truth answers detected; rubric present; switching importance metric from "
+                    f"{importance_metric} to {score_metric}"
+                )
+                importance_metric = score_metric
+            else:
+                print(
+                    "No ground-truth answers detected; rubric present but no matching score metric; switching importance metric from "
+                    f"{importance_metric} to different_trajectories_fraction"
+                )
+                importance_metric = "different_trajectories_fraction"
+        else:
+            print(
+                "No ground-truth answers detected; switching importance metric from "
+                f"{importance_metric} to different_trajectories_fraction"
+            )
+            importance_metric = "different_trajectories_fraction"
 
     category_importance = generate_plots(results, output_dir, importance_metric)
 
@@ -4621,7 +5137,7 @@ def main():
             force_metadata=args.force_metadata,
         )
 
-        # If forced answer data is available, run additional analysis using forced_importance_accuracy
+        # If forced answer data is available, run additional analysis using forced importance metrics
         if correct_forced_answer_dir:
             print(
                 "\n=== Running additional analysis with forced importance metric ===\n"
@@ -4631,6 +5147,7 @@ def main():
 
             # Check if the results have the forced importance metric
             forced_importance_exists = False
+            forced_importance_score_exists = False
 
             for result_file in correct_output_dir.glob("**/chunks_labeled.json"):
                 try:
@@ -4644,6 +5161,8 @@ def main():
                             or "forced_importance_kl" in chunk
                         ):
                             forced_importance_exists = True
+                        if "forced_importance_score" in chunk:
+                            forced_importance_score_exists = True
                             break
 
                     if forced_importance_exists:
@@ -4652,7 +5171,7 @@ def main():
                 except Exception as e:
                     print(f"Error checking for forced importance metric: {e}")
 
-            if forced_importance_exists:
+            if forced_importance_exists or forced_importance_score_exists:
                 print(
                     "Found forced importance metric in results, running specialized analysis"
                 )
@@ -4674,19 +5193,26 @@ def main():
                     with open(src_file, "r", encoding="utf-8") as f:
                         results = json.load(f)
 
+                    # Prefer rubric-score forced importance when available
+                    forced_metric = (
+                        "forced_importance_score"
+                        if any(bool(r.get("has_rubric")) for r in (results or []))
+                        else "forced_importance_accuracy"
+                    )
+
                     analyze_top_steps_by_category(
                         results,
                         forced_output_dir,
                         top_n=20,
                         use_abs=True,
-                        importance_metric="forced_importance_accuracy",
+                        importance_metric=forced_metric,
                     )
                     analyze_high_zscore_steps_by_category(
                         results,
                         forced_output_dir,
                         z_threshold=1.5,
                         use_abs=True,
-                        importance_metric="forced_importance_accuracy",
+                        importance_metric=forced_metric,
                     )
 
                     # Also run analyses for forced_importance_kl
