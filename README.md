@@ -74,13 +74,118 @@ Rubric scoring fields written to artifacts:
 
 Whitebox scripts assume a `rollouts/<model>/temperature_.../correct_base_solution/problem_*` structure.
 
+The rollout root can also be overridden via:
+
+```bash
+export WHITEBOX_ROLLOUTS_ROOT="rollouts/<MODEL>/<TEMPERATURE_FOLDER>"
+```
+
+Most expensive computations are cached automatically:
+
+- Sentence-averaged attention matrices: `attn_cache/` (written relative to your working directory)
+- Other derived artifacts (receiver heads, vertical scores, etc.): `whitebox-analyses/**/.pkljar/` via the `pkld` decorator
+
 For Qwen3-4B:
 
 ```bash
 export WHITEBOX_ROLLOUTS_ROOT="rollouts/Qwen3-4B-Thinking-2507/temperature_0.6_top_p_0.95"
 
+# 1) Precompute / cache attention matrices + receiver-head scores
 uv run python whitebox-analyses/scripts/prep_attn_cache.py --model qwen3-4b
+
+# 2) Generate per-sentence receiver-head CSVs (uses chunks_labeled.json labels if present)
 uv run python whitebox-analyses/scripts/generate_rec_csvs.py --model-name qwen3-4b --data-model qwen3-4b --output-dir csvs
+```
+
+#### Attention analysis scripts
+
+These live in `whitebox-analyses/scripts/`.
+
+Cache / preprocessing:
+
+```bash
+# Cache for one model
+uv run python whitebox-analyses/scripts/prep_attn_cache.py --model qwen3-4b
+
+# Cache for all built-in models
+uv run python whitebox-analyses/scripts/prep_attn_cache.py --all-models
+
+# Also cache suppression (KL) artifacts (slow)
+uv run python whitebox-analyses/scripts/prep_attn_cache.py --model qwen3-4b --kl-divergence
+```
+
+Visualize attention matrices:
+
+```bash
+# Average the top-k receiver heads (default top-k is 32)
+uv run python whitebox-analyses/scripts/plot_one_attn_matrix.py \
+  --model-name qwen3-4b \
+  --problem-num 4682 \
+  --correct \
+  --top-k 32 \
+  --no-show
+
+# Plot a specific layer/head (set --top-k 0 to disable averaging)
+uv run python whitebox-analyses/scripts/plot_one_attn_matrix.py \
+  --model-name qwen3-4b \
+  --problem-num 4682 \
+  --correct \
+  --top-k 0 \
+  --layer 36 \
+  --head 6 \
+  --no-show
+```
+
+Grid of matrices across problems (useful for qualitative comparisons):
+
+```bash
+uv run python whitebox-analyses/scripts/plot_many_attn_matrices.py --model-name qwen3-4b --num-problems 20
+```
+
+Receiver-head distributions:
+
+```bash
+# Vertical attention score distribution for a layer/head (or top-k receiver heads)
+uv run python whitebox-analyses/scripts/plot_attention_heads.py --model-name qwen3-4b --problem-num 4682 --layer 20
+uv run python whitebox-analyses/scripts/plot_attention_heads.py --model-name qwen3-4b --problem-num 4682 --top-k 32
+```
+
+Taxonomy comparisons (requires CSVs from `generate_rec_csvs.py`):
+
+```bash
+uv run python whitebox-analyses/scripts/plot_rec_taxonomy.py --model-name qwen3-4b --top-k 32 --csv-dir csvs --plot-type box
+```
+
+Receiver-head identification + sanity checks:
+
+```bash
+# Kurtosis stats used to identify "receiver heads"
+uv run python whitebox-analyses/scripts/plot_kurt_stats.py --model-name qwen3-4b
+
+# Split-half reliability of kurtosis across problems
+uv run python whitebox-analyses/scripts/eval_receiver_head_reliability.py --model-name qwen3-4b
+```
+
+Attention suppression (KL-based):
+
+```bash
+# Prep: cache with --kl-divergence first (slow)
+uv run python whitebox-analyses/scripts/prep_attn_cache.py --model qwen3-4b --kl-divergence
+
+# Plot suppression matrix for one problem
+uv run python whitebox-analyses/scripts/plot_suppression_matrix.py --model-name qwen3-4b --problem-num 4682 --correct
+```
+
+Print a labeled transcript (for case studies / paper figures):
+
+```bash
+uv run python whitebox-analyses/scripts/print_case_study_transcript.py \
+  --base-dir rollouts \
+  --model-name Qwen3-4B-Thinking-2507 \
+  --temperature-folder temperature_0.6_top_p_0.95 \
+  --solution-type correct_base_solution \
+  --problem-num 4682 \
+  --output-format latex
 ```
 
 ### Label Taxonomy Change
@@ -111,7 +216,9 @@ This fork also includes a small static site under `web/` that loads exported JSO
 ```bash
 uv run python scripts/build_web_data.py \
   --rollouts-dir rollouts/Qwen3-4B-Thinking-2507/temperature_0.6_top_p_0.95/correct_base_solution \
-  --output-dir web/data
+  --output-dir web/data \
+  --max-rollouts-per-chunk 25 \
+  --max-rollout-chars 8000
 ```
 
 2) Serve the site locally:
