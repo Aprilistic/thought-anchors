@@ -4,6 +4,7 @@ const DATA_ROOT = "./data";
 
 const els = {
   problemSelect: document.getElementById("problemSelect"),
+  exampleSelect: document.getElementById("exampleSelect"),
   metricSelect: document.getElementById("metricSelect"),
   highlightTag: document.getElementById("highlightTag"),
   nodeThreshold: document.getElementById("nodeThreshold"),
@@ -21,6 +22,17 @@ const els = {
 let indexData = null;
 let currentProblem = null;
 let selectedChunkIdx = null;
+let selectedRolloutIdx = null;
+
+function getProblemGroupById(problemId) {
+  return indexData?.problems?.find((p) => String(p.problem_id) === String(problemId)) || null;
+}
+
+function getExampleById(problemId, exampleId) {
+  const group = getProblemGroupById(problemId);
+  if (!group) return null;
+  return (group.examples || []).find((ex) => String(ex.id) === String(exampleId)) || null;
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -97,6 +109,15 @@ function renderSelectedChunk() {
   const v = metricValue(chunk, metric);
   const tags = (chunk.function_tags || []).join(", ");
 
+  const rollouts = Array.isArray(chunk.rollouts) ? chunk.rollouts : [];
+  let selectedRollout = null;
+  if (rollouts.length > 0) {
+    if (selectedRolloutIdx === null || !rollouts.some((r) => String(r.i) === String(selectedRolloutIdx))) {
+      selectedRolloutIdx = rollouts[0].i;
+    }
+    selectedRollout = rollouts.find((r) => String(r.i) === String(selectedRolloutIdx)) || null;
+  }
+
   // Highlight the chunk text based on tags if needed, for now just show text
   let summaryHtml = "";
   if (chunk.summary) {
@@ -124,6 +145,40 @@ function renderSelectedChunk() {
             </div>
         </div>
 
+        ${rollouts.length > 0 ? `
+        <div class="chunk-body">
+             <div class="section-title">Trajectory</div>
+             <select id="rolloutSelect" class="select-input" style="width:100%; margin-top:8px;">
+               ${rollouts.map((r) => {
+                 const rs = (typeof r.rubric_score === "number" && Number.isFinite(r.rubric_score)) ? r.rubric_score.toFixed(3) : "n/a";
+                 const lab = `#${r.i}  score=${rs}`;
+                 const sel = String(r.i) === String(selectedRolloutIdx) ? "selected" : "";
+                 return `<option value="${escapeHtml(r.i)}" ${sel}>${escapeHtml(lab)}</option>`;
+               }).join("")}
+             </select>
+
+             <div style="margin-top:12px;">
+               <div class="detail-metric">
+                   <span class="detail-label">rubric_score</span>
+                   <span class="detail-value">${selectedRollout && typeof selectedRollout.rubric_score === "number" && Number.isFinite(selectedRollout.rubric_score) ? selectedRollout.rubric_score.toFixed(4) : "n/a"}</span>
+               </div>
+               <div class="detail-metric">
+                   <span class="detail-label">rubric_grade</span>
+                   <span class="detail-value">${selectedRollout && selectedRollout.rubric_grade ? escapeHtml(selectedRollout.rubric_grade) : "n/a"}</span>
+               </div>
+             </div>
+
+             <div style="margin-top:16px;">
+               <div class="section-title">Rollout Reasoning</div>
+               <div class="chunk-box" style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(selectedRollout?.rollout_reasoning_text || "")}</div>
+             </div>
+             <div style="margin-top:16px;">
+               <div class="section-title">Rollout Final</div>
+               <div class="chunk-box" style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(selectedRollout?.rollout_final_text || "")}</div>
+             </div>
+        </div>
+        ` : ""}
+
         <div class="chunk-body">
              <div class="section-title">Content</div>
              <div class="chunk-box" style="font-family:var(--font-mono); font-size:12px;">${escapeHtml(chunk.chunk || "")}</div>
@@ -131,6 +186,16 @@ function renderSelectedChunk() {
         </div>
     </div>
   `;
+
+  if (rollouts.length > 0) {
+    const sel = document.getElementById("rolloutSelect");
+    if (sel) {
+      sel.addEventListener("change", (e) => {
+        selectedRolloutIdx = e.target.value;
+        renderSelectedChunk();
+      });
+    }
+  }
 }
 
 function renderChunks() {
@@ -165,6 +230,7 @@ function renderChunks() {
 
     div.addEventListener("click", () => {
       selectedChunkIdx = chunk.idx;
+      selectedRolloutIdx = null;
       renderChunks();
       renderSelectedChunk();
       renderPlot();
@@ -430,14 +496,16 @@ function renderGraph() {
 // -- Init --
 
 async function loadProblemById(id) {
-  const item = indexData.problems.find((p) => p.id === id);
-  if (!item) throw new Error(`Unknown problem id: ${id}`);
+  const problemId = els.problemSelect?.value;
+  const item = getExampleById(problemId, id);
+  if (!item) throw new Error(`Unknown example id: ${id}`);
 
   const data = await fetchJson(`${DATA_ROOT}/${item.path}`);
   currentProblem = data;
   selectedChunkIdx = (currentProblem.chunks?.[0]?.idx ?? null);
 
-  setQueryParam("p", id);
+  setQueryParam("p", problemId);
+  setQueryParam("e", id);
   renderProblemHeader();
   renderChunks();
   renderSelectedChunk();
@@ -449,11 +517,28 @@ function populateProblemSelect() {
   els.problemSelect.innerHTML = "";
   for (const p of indexData.problems) {
     const opt = document.createElement("option");
-    opt.value = p.id;
-    // Shorten title
-    const shortTitle = p.title.length > 50 ? p.title.substring(0, 50) + "..." : p.title;
-    opt.textContent = `${p.id}: ${shortTitle}`;
+    opt.value = p.problem_id;
+    const title = String(p.title || p.problem_id);
+    const shortTitle = title.length > 70 ? title.substring(0, 70) + "..." : title;
+    opt.textContent = `${p.problem_id}: ${shortTitle}`;
     els.problemSelect.appendChild(opt);
+  }
+}
+
+function populateExampleSelect(problemId) {
+  const group = getProblemGroupById(problemId);
+  const examples = group?.examples || [];
+  els.exampleSelect.innerHTML = "";
+  for (const ex of examples) {
+    const opt = document.createElement("option");
+    opt.value = ex.id;
+    const va = Number.isFinite(ex.va_chunks) ? ex.va_chunks : (ex.va_chunks ?? 0);
+    const score = (typeof ex.base_rubric_score === "number" && Number.isFinite(ex.base_rubric_score))
+      ? ex.base_rubric_score.toFixed(3)
+      : "n/a";
+    const label = `VA=${va}  score=${score}  ${ex.ci || ""}`.trim();
+    opt.textContent = label;
+    els.exampleSelect.appendChild(opt);
   }
 }
 
@@ -468,14 +553,37 @@ async function init() {
 
   populateProblemSelect();
 
-  const requested = getQueryParam("p");
-  const first = indexData?.problems?.[0]?.id;
-  const initial = requested && indexData.problems.some((p) => p.id === requested) ? requested : first;
-  els.problemSelect.value = initial;
+  const requestedProblem = getQueryParam("p");
+  const firstProblem = indexData?.problems?.[0]?.problem_id;
+  const initialProblem = requestedProblem && indexData.problems.some((p) => String(p.problem_id) === String(requestedProblem))
+    ? requestedProblem
+    : firstProblem;
+  els.problemSelect.value = initialProblem;
+
+  populateExampleSelect(initialProblem);
+
+  const requestedExample = getQueryParam("e");
+  const group = getProblemGroupById(initialProblem);
+  const firstExample = group?.examples?.[0]?.id;
+  const initialExample = requestedExample && group?.examples?.some((ex) => String(ex.id) === String(requestedExample))
+    ? requestedExample
+    : firstExample;
+  els.exampleSelect.value = initialExample;
 
   // Event Listeners
   els.problemSelect.addEventListener("change", async () => {
-    await loadProblemById(els.problemSelect.value);
+    const pid = els.problemSelect.value;
+    populateExampleSelect(pid);
+    const g = getProblemGroupById(pid);
+    const ex0 = g?.examples?.[0]?.id;
+    if (ex0) {
+      els.exampleSelect.value = ex0;
+      await loadProblemById(ex0);
+    }
+  });
+
+  els.exampleSelect.addEventListener("change", async () => {
+    await loadProblemById(els.exampleSelect.value);
   });
 
   els.metricSelect.addEventListener("change", () => {
@@ -505,7 +613,7 @@ async function init() {
   }).observe(els.plot.parentElement);
 
 
-  if (initial) await loadProblemById(initial);
+  if (initialExample) await loadProblemById(initialExample);
 }
 
 // Start

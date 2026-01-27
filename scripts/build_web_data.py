@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +14,115 @@ def _read_json(path: Path) -> Any:
 
 def _safe_str(val: Any) -> str:
     return val if isinstance(val, str) else ""
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if not isinstance(text, str):
+        return ""
+    if max_chars <= 0:
+        return text
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 12)] + "...[truncated]"
+
+
+def _split_think_final(text: str) -> Tuple[str, str]:
+    """Best-effort split into reasoning and final, using </think>."""
+
+    if not isinstance(text, str) or not text:
+        return "", ""
+
+    s = text
+    if "<think>" in s:
+        s = s.split("<think>", 1)[1]
+
+    if "</think>" in s:
+        pre, post = s.split("</think>", 1)
+        return pre.strip(), post.lstrip()
+
+    return s.strip(), ""
+
+
+_PROBLEM_ID_RE = re.compile(r"\bproblem_(\d+)\b")
+
+
+def _base_problem_id(problem_dir_name: str) -> str:
+    """Normalize a problem folder name to a stable problem id.
+
+    Examples:
+    - problem_42 -> problem_42
+    - problem_42_run_3 -> problem_42
+    """
+
+    m = _PROBLEM_ID_RE.search(str(problem_dir_name or ""))
+    if not m:
+        return str(problem_dir_name or "").strip() or "unknown"
+    return f"problem_{m.group(1)}"
+
+
+def _va_chunk_count(chunks_out: List[Dict[str, Any]]) -> int:
+    n = 0
+    for c in chunks_out or []:
+        tags = c.get("function_tags", [])
+        if isinstance(tags, list) and any(
+            t == "verbalized_evaluation_awareness" for t in tags
+        ):
+            n += 1
+    return n
+
+
+def _load_chunk_rollouts(
+    *,
+    problem_dir: Path,
+    chunk_idx: int,
+    max_rollouts_per_chunk: int,
+    max_rollout_chars: int,
+) -> List[Dict[str, Any]]:
+    chunk_dir = problem_dir / f"chunk_{chunk_idx}"
+    fp = chunk_dir / "solutions.json"
+    if not fp.exists():
+        return []
+
+    try:
+        data = _read_json(fp)
+    except Exception:
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for i, sol in enumerate(data):
+        if max_rollouts_per_chunk > 0 and len(out) >= max_rollouts_per_chunk:
+            break
+        if not isinstance(sol, dict):
+            continue
+        if sol.get("error"):
+            continue
+
+        reasoning = _safe_str(sol.get("rollout_reasoning_text"))
+        final = _safe_str(sol.get("rollout_final_text"))
+
+        if not reasoning and not final:
+            rollout_text = _safe_str(sol.get("rollout"))
+            if rollout_text:
+                reasoning, final = _split_think_final(rollout_text)
+
+        out.append(
+            {
+                "i": int(i),
+                "chunk_resampled": _safe_str(sol.get("chunk_resampled")),
+                "answer": _safe_str(sol.get("answer")),
+                "is_correct": sol.get("is_correct", None),
+                "rubric_score": sol.get("rubric_score", None),
+                "rubric_grade": _safe_str(sol.get("rubric_grade")),
+                "rubric_is_valid": sol.get("rubric_is_valid", None),
+                "rollout_reasoning_text": _truncate_text(reasoning, max_rollout_chars),
+                "rollout_final_text": _truncate_text(final, max_rollout_chars),
+            }
+        )
+
+    return out
 
 
 def extract_instruction_from_prompt(prompt: str) -> str:
@@ -75,7 +185,13 @@ def find_problem_dirs(rollouts_dir: Path) -> List[Tuple[str, Path]]:
     )
 
 
-def build_problem_payload(ci: str, problem_dir: Path) -> Dict[str, Any]:
+def build_problem_payload(
+    ci: str,
+    problem_dir: Path,
+    *,
+    max_rollouts_per_chunk: int,
+    max_rollout_chars: int,
+) -> Dict[str, Any]:
     base_solution_path = problem_dir / "base_solution.json"
     base_solution: Dict[str, Any] = {}
     if base_solution_path.exists():
@@ -154,6 +270,7 @@ def build_problem_payload(ci: str, problem_dir: Path) -> Dict[str, Any]:
                             or k.endswith("_kl")
                         )
                     },
+                    "rollouts": [],
                 }
             )
     elif chunks_fallback:
@@ -165,10 +282,25 @@ def build_problem_payload(ci: str, problem_dir: Path) -> Dict[str, Any]:
                     "summary": "",
                     "function_tags": [],
                     "metrics": {},
+                    "rollouts": [],
                 }
             )
 
-    pid = problem_dir.name
+    # Attach per-chunk rollouts (trajectories) if present.
+    for c in chunks_out:
+        try:
+            idx = int(c.get("idx", 0))
+        except Exception:
+            continue
+        c["rollouts"] = _load_chunk_rollouts(
+            problem_dir=problem_dir,
+            chunk_idx=idx,
+            max_rollouts_per_chunk=max_rollouts_per_chunk,
+            max_rollout_chars=max_rollout_chars,
+        )
+
+    base_pid = _base_problem_id(problem_dir.name)
+    example_id = f"{problem_dir.name}__{ci}"
     full_cot = _safe_str(base_solution.get("full_cot"))
     if not full_cot:
         # fallback to prompt+solution
@@ -197,13 +329,16 @@ def build_problem_payload(ci: str, problem_dir: Path) -> Dict[str, Any]:
                 continue
 
     return {
-        "id": pid,
+        "id": example_id,
+        "problem_id": base_pid,
         "ci": ci,
         "instruction": instruction,
         "nickname": _safe_str(base_solution.get("nickname")),
         "full_cot": full_cot,
         "chunks": chunks_out,
         "edges": edges,
+        "va_chunks": _va_chunk_count(chunks_out),
+        "base_rubric_score": base_solution.get("rubric_score", None),
     }
 
 
@@ -243,6 +378,19 @@ def main() -> None:
         help="Only export first N problems",
     )
 
+    parser.add_argument(
+        "--max-rollouts-per-chunk",
+        type=int,
+        default=25,
+        help="Max rollouts to export per chunk (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--max-rollout-chars",
+        type=int,
+        default=8000,
+        help="Max characters per rollout text field (0 = unlimited)",
+    )
+
     args = parser.parse_args()
     rollouts_dir = Path(args.rollouts_dir)
     out_dir = Path(args.output_dir)
@@ -254,12 +402,18 @@ def main() -> None:
     problems_out_dir = out_dir / "problems"
     problems_out_dir.mkdir(parents=True, exist_ok=True)
 
-    index_items: List[Dict[str, Any]] = []
+    by_problem: Dict[str, Dict[str, Any]] = {}
     for ci, pdir in problems:
-        payload = build_problem_payload(ci, pdir)
+        payload = build_problem_payload(
+            ci,
+            pdir,
+            max_rollouts_per_chunk=args.max_rollouts_per_chunk,
+            max_rollout_chars=args.max_rollout_chars,
+        )
         title = make_title(payload)
-        pid = payload["id"]
-        out_path = problems_out_dir / f"{pid}.json"
+        example_id = payload["id"]
+        base_pid = payload.get("problem_id") or _base_problem_id(pdir.name)
+        out_path = problems_out_dir / f"{example_id}.json"
         out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         # Basic tag histogram for quick filtering
@@ -268,14 +422,67 @@ def main() -> None:
             for t in c.get("function_tags", []) or []:
                 tag_counts[t] = tag_counts.get(t, 0) + 1
 
-        index_items.append(
+        group = by_problem.setdefault(
+            str(base_pid),
             {
-                "id": pid,
+                "problem_id": str(base_pid),
+                "title": title,
+                "examples": [],
+            },
+        )
+
+        # Prefer a non-empty title if present.
+        if title and (not group.get("title") or group.get("title") == str(base_pid)):
+            group["title"] = title
+
+        group["examples"].append(
+            {
+                "id": example_id,
                 "ci": ci,
                 "title": title,
                 "num_chunks": len(payload.get("chunks", [])),
+                "va_chunks": payload.get("va_chunks", 0),
+                "base_rubric_score": payload.get("base_rubric_score", None),
                 "tag_counts": tag_counts,
-                "path": f"problems/{pid}.json",
+                "path": f"problems/{example_id}.json",
+            }
+        )
+
+    # Rank examples per problem by VA chunks, then base rubric score (if present).
+    index_items: List[Dict[str, Any]] = []
+    for base_pid, group in sorted(by_problem.items(), key=lambda kv: kv[0]):
+        examples = group.get("examples", [])
+
+        def _score_key(ex: Dict[str, Any]) -> float:
+            v = ex.get("base_rubric_score")
+            if (
+                isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and math.isfinite(float(v))
+            ):
+                return float(v)
+            return float("-inf")
+
+        def _ci_key(ex: Dict[str, Any]) -> int:
+            # Prefer correct first when tie-breaking.
+            return 0 if str(ex.get("ci")) == "correct_base_solution" else 1
+
+        examples_sorted = sorted(
+            examples,
+            key=lambda ex: (
+                -int(ex.get("va_chunks") or 0),
+                -_score_key(ex),
+                _ci_key(ex),
+                str(ex.get("id") or ""),
+            ),
+        )
+
+        group_title = group.get("title") or str(base_pid)
+        index_items.append(
+            {
+                "problem_id": str(base_pid),
+                "title": group_title,
+                "examples": examples_sorted[:10],
             }
         )
 
