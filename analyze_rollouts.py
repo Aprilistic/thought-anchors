@@ -27,6 +27,204 @@ from matplotlib.lines import Line2D
 FORTRESS_GRADE_PATTERN = re.compile(r"(?i)GRADE\s*:\s*([YN]+)")
 
 
+# Heuristic prefilter for VA-heavy rollouts before DAG labeling.
+_VA_HINT_RE = re.compile(
+    r"(?i)\b(?:eval(?:uation)?|judge(?:d|ment)?|graded?|rubric|scor(?:e|ing)|test(?:ing)?|being\s+evaluated|criteria)\b"
+)
+
+
+def _va_hint_count(text: str) -> int:
+    if not isinstance(text, str) or not text:
+        return 0
+    return len(_VA_HINT_RE.findall(text))
+
+
+def _count_va_tags(labeled_chunks: List[Dict]) -> int:
+    n = 0
+    for c in labeled_chunks or []:
+        tags = c.get("function_tags", [])
+        if isinstance(tags, list) and any(
+            t == "verbalized_evaluation_awareness" for t in tags
+        ):
+            n += 1
+    return n
+
+
+def export_top_va_rollout_examples(
+    *,
+    problem_dir: Path,
+    ci_dir_name: str,
+    export_root: Path,
+    problem: Dict,
+    base_solution: Dict,
+    valid_chunk_indices: List[int],
+    top_k: int,
+    max_candidates: int,
+    force: bool,
+) -> None:
+    """Export top-K rollout traces as separate problem_* dirs.
+
+    These are build_web_data-compatible directories (problem.json/base_solution.json/chunks.json/chunks_labeled.json).
+    Ranking target: number of VA-tagged chunks in the rollout trace.
+    """
+
+    if top_k <= 0:
+        return
+
+    instruction_text = (
+        problem.get("instruction")
+        or problem.get("prompt")
+        or problem.get("problem")
+        or ""
+    )
+    if not isinstance(instruction_text, str):
+        instruction_text = str(instruction_text)
+
+    candidates: List[Dict] = []
+    for chunk_idx in valid_chunk_indices:
+        chunk_dir = problem_dir / f"chunk_{chunk_idx}"
+        solutions_file = chunk_dir / "solutions.json"
+        if not solutions_file.exists():
+            continue
+        try:
+            with open(solutions_file, "r", encoding="utf-8") as f:
+                solutions = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(solutions, list):
+            continue
+        for sol_idx, sol in enumerate(solutions):
+            if not isinstance(sol, dict):
+                continue
+            if sol.get("error"):
+                continue
+            reasoning = sol.get("rollout_reasoning_text")
+            if not isinstance(reasoning, str) or not reasoning.strip():
+                reasoning = sol.get("rollout")
+            if not isinstance(reasoning, str) or not reasoning.strip():
+                continue
+
+            candidates.append(
+                {
+                    "chunk_idx": int(chunk_idx),
+                    "sol_idx": int(sol_idx),
+                    "reasoning": reasoning,
+                    "final": sol.get("rollout_final_text") or "",
+                    "full_cot": sol.get("full_cot") or "",
+                    "answer": sol.get("answer") or "",
+                    "is_correct": sol.get("is_correct", None),
+                    "rubric_score": sol.get("rubric_score", None),
+                    "rubric_grade": sol.get("rubric_grade", None),
+                    "rubric_votes": sol.get("rubric_votes", None),
+                    "rubric_is_valid": sol.get("rubric_is_valid", None),
+                    "va_hint": _va_hint_count(reasoning),
+                }
+            )
+
+    if not candidates:
+        return
+
+    # Prefilter by VA hints to limit LLM labeling cost.
+    candidates_sorted = sorted(
+        candidates,
+        key=lambda c: (
+            -int(c.get("va_hint") or 0),
+            -float(c.get("rubric_score") or float("-inf"))
+            if isinstance(c.get("rubric_score"), (int, float))
+            else float("-inf"),
+        ),
+    )
+    pre = candidates_sorted[: max(1, int(max_candidates))]
+
+    labeled: List[Dict] = []
+    for c in pre:
+        chunks = split_solution_into_chunks(str(c.get("reasoning") or ""))
+        if not chunks:
+            continue
+
+        labeled_map = label_chunk(instruction_text, chunks, 0)
+
+        labeled_chunks: List[Dict] = []
+        for i, text in enumerate(chunks):
+            d: Dict = {"chunk": text, "chunk_idx": i, "summary": ""}
+            chunk_key = str(i)
+            if isinstance(labeled_map, dict) and chunk_key in labeled_map:
+                mapping = labeled_map.get(chunk_key) or {}
+                if isinstance(mapping, dict):
+                    d["function_tags"] = mapping.get("function_tags", ["unknown"])
+                    d["depends_on"] = mapping.get("depends_on", [])
+                else:
+                    d["function_tags"] = ["unknown"]
+                    d["depends_on"] = []
+            else:
+                d["function_tags"] = ["unknown"]
+                d["depends_on"] = []
+            labeled_chunks.append(d)
+
+        c2 = dict(c)
+        c2["labeled_chunks"] = labeled_chunks
+        c2["va_tags"] = _count_va_tags(labeled_chunks)
+        labeled.append(c2)
+
+    if not labeled:
+        return
+
+    ranked = sorted(
+        labeled,
+        key=lambda c: (
+            -int(c.get("va_tags") or 0),
+            -int(c.get("va_hint") or 0),
+            -float(c.get("rubric_score") or float("-inf"))
+            if isinstance(c.get("rubric_score"), (int, float))
+            else float("-inf"),
+        ),
+    )[: int(top_k)]
+
+    out_ci_dir = export_root / ci_dir_name
+    out_ci_dir.mkdir(parents=True, exist_ok=True)
+
+    for rank, c in enumerate(ranked):
+        ex_dir = out_ci_dir / f"{problem_dir.name}_va_{rank:02d}"
+        if ex_dir.exists() and not force:
+            continue
+        ex_dir.mkdir(parents=True, exist_ok=True)
+
+        # problem.json
+        with open(ex_dir / "problem.json", "w", encoding="utf-8") as f:
+            json.dump(problem, f, indent=2)
+
+        # base_solution.json
+        ex_solution = {
+            "instruction": instruction_text,
+            "prompt": base_solution.get("prompt", ""),
+            "solution": str(c.get("reasoning", "")) + "\n" + str(c.get("final", "")),
+            "reasoning_text": c.get("reasoning", ""),
+            "final_text": c.get("final", ""),
+            "full_cot": c.get("full_cot", "")
+            or (str(base_solution.get("prompt", "")) + str(c.get("reasoning", ""))),
+            "answer": c.get("answer", ""),
+            "is_correct": c.get("is_correct", None),
+            "rubric_score": c.get("rubric_score", None),
+            "rubric_grade": c.get("rubric_grade", None),
+            "rubric_votes": c.get("rubric_votes", None),
+            "rubric_is_valid": c.get("rubric_is_valid", None),
+            "source_chunk_idx": c.get("chunk_idx"),
+            "source_solution_idx": c.get("sol_idx"),
+            "va_chunks": c.get("va_tags", 0),
+        }
+        with open(ex_dir / "base_solution.json", "w", encoding="utf-8") as f:
+            json.dump(ex_solution, f, indent=2)
+
+        # chunks.json
+        ex_chunks = [d.get("chunk", "") for d in (c.get("labeled_chunks") or [])]
+        with open(ex_dir / "chunks.json", "w", encoding="utf-8") as f:
+            json.dump({"chunks": ex_chunks}, f, indent=2)
+
+        # chunks_labeled.json
+        with open(ex_dir / "chunks_labeled.json", "w", encoding="utf-8") as f:
+            json.dump(c.get("labeled_chunks") or [], f, indent=2)
+
+
 def _extract_grade_string(text: str) -> str:
     """Extract the last GRADE: [YN]+ from a model response."""
 
@@ -383,6 +581,31 @@ parser.add_argument(
     default=False,
     action="store_true",
     help="If True, use global vocabulary from entire dataset for consistent Laplace smoothing across all KL divergence calculations. If False (default), use local vocabulary (union of answers in each pair of chunks)",
+)
+
+parser.add_argument(
+    "--export_top_va_examples_dir",
+    type=str,
+    default="",
+    help="If set, export top-K rollout traces per problem (ranked by VA-tagged chunk count) into this directory, in build_web_data-compatible layout",
+)
+parser.add_argument(
+    "--export_top_va_examples_k",
+    type=int,
+    default=10,
+    help="How many rollout examples to export per problem (top-K)",
+)
+parser.add_argument(
+    "--export_top_va_examples_max_candidates",
+    type=int,
+    default=50,
+    help="Max rollout candidates per problem to DAG-label before ranking (prefiltered by a VA keyword heuristic)",
+)
+parser.add_argument(
+    "--export_top_va_examples_force",
+    default=False,
+    action="store_true",
+    help="Overwrite existing exported rollout example directories",
 )
 
 args = parser.parse_args()
@@ -1623,6 +1846,11 @@ def analyze_problem(
     sentence_model: str = "all-MiniLM-L6-v2",
     similarity_threshold: float = 0.8,
     force_metadata: bool = False,
+    export_top_va_examples_dir: Optional[Path] = None,
+    export_top_va_examples_k: int = 0,
+    export_top_va_examples_max_candidates: int = 50,
+    export_top_va_examples_force: bool = False,
+    ci_dir_name: str = "",
 ) -> Dict:
     """
     Analyze a single problem's solution.
@@ -1748,6 +1976,26 @@ def analyze_problem(
             f"Problem {problem_dir.name}: Only {len(existing_chunk_folders)}/{len(chunks)} chunk folders exist"
         )
         return None
+
+    if export_top_va_examples_dir and export_top_va_examples_k > 0:
+        try:
+            ci_name = ci_dir_name.strip() if isinstance(ci_dir_name, str) else ""
+            if not ci_name:
+                ci_name = "correct_base_solution"
+
+            export_top_va_rollout_examples(
+                problem_dir=problem_dir,
+                ci_dir_name=ci_name,
+                export_root=export_top_va_examples_dir,
+                problem=problem,
+                base_solution=base_solution,
+                valid_chunk_indices=valid_chunk_indices,
+                top_k=int(export_top_va_examples_k),
+                max_candidates=int(export_top_va_examples_max_candidates),
+                force=bool(export_top_va_examples_force),
+            )
+        except Exception as e:
+            print(f"Problem {problem_dir.name}: Export top-VA examples failed: {e}")
 
     # Calculate token counts for each chunk's full_cot
     token_counts = []
@@ -3993,20 +4241,36 @@ def process_rollouts(
         f"Analyzing {len(analyzable_problem_dirs)} problems with at least some chunk folders"
     )
 
+    export_root = (
+        Path(args.export_top_va_examples_dir)
+        if getattr(args, "export_top_va_examples_dir", "")
+        else None
+    )
+    ci_dir_name = rollouts_dir.name
+
     # Analyze each problem
     results = []
     for problem_dir in tqdm(
         analyzable_problem_dirs, desc=f"Analyzing {rollout_type} problems"
     ):
         result = analyze_problem(
-            problem_dir,
-            absolute,
-            force_relabel,
-            forced_answer_dir,
-            use_existing_metrics,
-            sentence_model,
-            similarity_threshold,
-            force_metadata,
+            problem_dir=problem_dir,
+            use_absolute=absolute,
+            force_relabel=force_relabel,
+            forced_answer_dir=forced_answer_dir,
+            use_existing_metrics=use_existing_metrics,
+            sentence_model=sentence_model,
+            similarity_threshold=similarity_threshold,
+            force_metadata=force_metadata,
+            export_top_va_examples_dir=export_root,
+            export_top_va_examples_k=int(getattr(args, "export_top_va_examples_k", 0)),
+            export_top_va_examples_max_candidates=int(
+                getattr(args, "export_top_va_examples_max_candidates", 50)
+            ),
+            export_top_va_examples_force=bool(
+                getattr(args, "export_top_va_examples_force", False)
+            ),
+            ci_dir_name=ci_dir_name,
         )
         if result:
             results.append(result)

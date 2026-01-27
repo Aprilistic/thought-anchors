@@ -221,6 +221,41 @@ uv run python scripts/build_web_data.py \
   --max-rollout-chars 8000
 ```
 
+#### Multiple graphs per problem (Top-K by VA)
+
+The web viewer shows one causal graph per *reasoning trace* (a directory containing `chunks.json` + `chunks_labeled.json`).
+
+If you only have one trace per problem (e.g. only `correct_base_solution/problem_*`), you'll only see one graph.
+
+This fork can export additional traces by selecting rollouts and ranking them by the number of chunks tagged `verbalized_evaluation_awareness` (VA). It then writes them out as build-web-data-compatible `problem_*` directories.
+
+1) Export top-K VA-heavy rollout traces:
+
+```bash
+uv run python analyze_rollouts.py \
+  --correct_rollouts_dir rollouts/<MODEL>/<TEMPERATURE_FOLDER>/correct_base_solution \
+  --incorrect_rollouts_dir rollouts/<MODEL>/<TEMPERATURE_FOLDER>/incorrect_base_solution \
+  --export_top_va_examples_dir rollouts/<MODEL>/<TEMPERATURE_FOLDER>/va_examples \
+  --export_top_va_examples_k 10 \
+  --export_top_va_examples_max_candidates 50
+```
+
+This creates:
+
+- `rollouts/<MODEL>/<TEMPERATURE_FOLDER>/va_examples/correct_base_solution/problem_XXX_va_00/`
+- `rollouts/<MODEL>/<TEMPERATURE_FOLDER>/va_examples/correct_base_solution/problem_XXX_va_01/`
+- ... (up to K)
+
+2) Build the web bundle from the exported examples:
+
+```bash
+uv run python scripts/build_web_data.py \
+  --rollouts-dir rollouts/<MODEL>/<TEMPERATURE_FOLDER>/va_examples \
+  --output-dir web/data
+```
+
+Now the web UI will show up to top 10 examples per problem, ranked by VA chunk count.
+
 2) Serve the site locally:
 
 ```bash
