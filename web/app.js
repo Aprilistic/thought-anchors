@@ -77,8 +77,16 @@ function chunkHasTag(chunk, tag) {
 
 function renderProblemHeader() {
   const instr = currentProblem?.title || currentProblem?.instruction || "";
-  els.instruction.textContent = instr || "(No instruction found)";
-  els.instruction.title = instr; // Tooltip for full text
+  const ci = currentProblem?.ci || "";
+  const va = (typeof currentProblem?.va_chunks === "number" && Number.isFinite(currentProblem.va_chunks))
+    ? currentProblem.va_chunks
+    : (currentProblem?.va_chunks ?? "n/a");
+  const edgeCount = Array.isArray(currentProblem?.edges) ? currentProblem.edges.length : 0;
+  const chunkCount = Array.isArray(currentProblem?.chunks) ? currentProblem.chunks.length : 0;
+  const meta = `${currentProblem?.id || ""}${ci ? `  (${ci})` : ""}  VA=${va}  chunks=${chunkCount}  edges=${edgeCount}`.trim();
+
+  els.instruction.textContent = meta || (instr || "(No instruction found)");
+  els.instruction.title = instr ? `${instr}\n\n${meta}` : meta;
 
   const cot = currentProblem?.full_cot || "";
   if (cot) {
@@ -440,7 +448,7 @@ function renderGraph() {
 
   // Draw Edges
   sequential.forEach(e => drawLine(e, "#e5e7eb", 1.5, 1));
-  causalKept.forEach(e => drawLine(e, "#0f172a", 1.5, 0.2));
+  causalKept.forEach(e => drawLine(e, "#0f172a", 2, 0.35));
 
   // Draw Nodes
   // Add drop shadow
@@ -503,6 +511,7 @@ async function loadProblemById(id) {
   const data = await fetchJson(`${DATA_ROOT}/${item.path}`);
   currentProblem = data;
   selectedChunkIdx = (currentProblem.chunks?.[0]?.idx ?? null);
+  selectedRolloutIdx = null;
 
   setQueryParam("p", problemId);
   setQueryParam("e", id);
